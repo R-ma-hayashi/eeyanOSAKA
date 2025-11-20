@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>Air Coin App</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <style>
+      /* Custom Animations */
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-10px); }
+        100% { transform: translateY(0px); }
+      }
+      .coin-icon {
+        animation: float 3s ease-in-out infinite;
+      }
+      
+      /* Theme Variables handled by body classes via JS */
+      .theme-boom { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); }
+      .theme-boom .card { border-top: 4px solid #fbbf24; } /* Gold/Happy */
+      
+      .theme-recession { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
+      .theme-recession .card { border-top: 4px solid #60a5fa; } /* Blue/Cool */
+      
+      .theme-normal { background-color: #f3f4f6; }
+      .theme-normal .card { border-top: 4px solid #10b981; } /* Green/Normal */
+      
+      /* Loader */
+      .loader {
+        border: 4px solid #f3f3f3;
+        border-top: 4px solid #3498db;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        animation: spin 1s linear infinite;
+      }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+  </head>
+  
+  <!-- サーバー側で判定したテーマをクラスに適用 -->
+  <!-- GAS環境外では初期値としてtheme-normalを適用 -->
+  <body class="min-h-screen pb-20 theme-normal">
+    
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+      <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-coins text-yellow-500 text-xl coin-icon"></i>
+          <h1 class="font-bold text-gray-800">Air Coin</h1>
+        </div>
+        <div class="flex items-center space-x-2">
+          <span class="text-xs text-gray-500" id="userDept">Loading...</span>
+          <div class="bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full text-sm font-bold">
+            <i class="fa-solid fa-wallet mr-1"></i><span id="walletBalance">--</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="max-w-md mx-auto p-4 space-y-6">
+      
+      <!-- User Status Card -->
+      <div class="card bg-white rounded-xl shadow p-4">
+        <div class="flex justify-between items-start">
+          <div>
+            <h2 class="text-lg font-bold text-gray-800" id="userName">User Name</h2>
+            <div class="flex items-center mt-1 space-x-2">
+              <span class="text-sm bg-gray-100 px-2 py-0.5 rounded text-gray-600" id="userRank">ランク: --</span>
+              <span class="text-xs text-gray-400">累計獲得: <span id="lifetimeReceived">--</span></span>
+            </div>
+          </div>
+          <div class="text-center" id="economyIndicator">
+             <span class="text-xs font-bold text-green-500">🌱 通常</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Send Coin Form -->
+      <div class="card bg-white rounded-xl shadow p-6">
+        <h3 class="font-bold text-gray-700 mb-4 flex items-center">
+          <i class="fa-regular fa-paper-plane mr-2"></i> コインを送る
+        </h3>
+        
+        <form id="sendForm" onsubmit="handleSend(event)">
+          <!-- Recipient Select -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">だれに？</label>
+            <select id="recipientSelect" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 bg-white" required onchange="updateCostDisplay()">
+              <option value="">選択してください</option>
+              <!-- Options will be populated by JS -->
+            </select>
+          </div>
+
+          <!-- Cost Indicator -->
+          <div id="costInfo" class="mb-4 hidden">
+            <div class="bg-blue-50 p-3 rounded-lg flex justify-between items-center text-sm">
+              <span class="text-blue-800" id="deptRelationText">関係性</span>
+              <span class="font-bold text-blue-800">消費: <span id="costValue">--</span> 枚</span>
+            </div>
+          </div>
+
+          <!-- Message -->
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">メッセージ (感謝や称賛)</label>
+            <textarea id="messageInput" rows="3" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500" placeholder="いつもありがとうございます！" required></textarea>
+          </div>
+
+          <!-- Submit Button -->
+          <button type="submit" id="submitBtn" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-lg transform active:scale-95 flex justify-center items-center">
+            <span>コインを送る</span>
+            <i class="fa-solid fa-gift ml-2"></i>
+          </button>
+        </form>
+      </div>
+      
+    </main>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 bg-gray-800 text-white px-6 py-3 rounded-full shadow-lg opacity-0 transition-opacity duration-300 pointer-events-none z-50 flex items-center text-sm whitespace-nowrap">
+      <span id="toastMessage">Notification</span>
+    </div>
+    
+    <!-- Modal Overlay for Loading -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-black bg-opacity-50 hidden items-center justify-center z-50">
+      <div class="bg-white p-5 rounded-lg flex flex-col items-center">
+        <div class="loader mb-3"></div>
+        <p class="text-gray-700 font-bold">送信中...</p>
+      </div>
+    </div>
+
+    <script>
+      // --- MOCK GOOGLE SCRIPT RUN (For Local Preview) ---
+      // GAS環境外（プレビュー）で動作させるためのモック
+      if (typeof google === 'undefined') {
+        console.warn('GAS環境外のため、google.script.runをモック化します。');
+        window.google = {
+          script: {
+            run: {
+              withSuccessHandler: function(successHandler) {
+                this._success = successHandler;
+                return this;
+              },
+              withFailureHandler: function(failureHandler) {
+                this._failure = failureHandler;
+                return this;
+              },
+              getInitialData: function() {
+                console.log("[Mock] getInitialData called");
+                setTimeout(() => {
+                  if (this._success) {
+                    this._success({
+                      user: {
+                        name: "山田 太郎 (Preview)",
+                        department: "営業部",
+                        rank: "一般",
+                        wallet_balance: 100,
+                        lifetime_received: 150,
+                        user_id: "yamada@example.com"
+                      },
+                      userList: [
+                        { email: "suzuki@example.com", name: "鈴木 一郎", department: "営業部" },
+                        { email: "sato@example.com", name: "佐藤 花子", department: "開発部" },
+                        { email: "tanaka@example.com", name: "田中 次郎", department: "人事部" }
+                      ],
+                      economy: "normal" 
+                    });
+                  }
+                }, 600);
+              },
+              sendAirCoin: function(email, message) {
+                console.log(`[Mock] sendAirCoin called. To: ${email}, Msg: ${message}`);
+                setTimeout(() => {
+                  if (this._success) {
+                    this._success({
+                      success: true,
+                      message: "【Mock】送信しました！（プレビューモード）",
+                      newBalance: 90
+                    });
+                  }
+                }, 1000);
+              }
+            }
+          }
+        };
+      }
+      // --------------------------------------------------
+
+      // --- Client Side Logic ---
+      
+      let currentUser = null;
+      let userList = [];
+      const COST_SAME = 1;
+      const COST_DIFF = 10;
+
+      // 初期化処理
+      window.onload = function() {
+        google.script.run
+          .withSuccessHandler(initSuccess)
+          .withFailureHandler(showError)
+          .getInitialData();
+      };
+
+      function initSuccess(data) {
+        currentUser = data.user;
+        userList = data.userList;
+        
+        // UI更新
+        document.getElementById('userName').textContent = currentUser.name;
+        document.getElementById('userDept').textContent = currentUser.department;
+        document.getElementById('userRank').textContent = `ランク: ${currentUser.rank}`;
+        document.getElementById('walletBalance').textContent = currentUser.wallet_balance;
+        document.getElementById('lifetimeReceived').textContent = currentUser.lifetime_received;
+        
+        // テーマ・景気表示の更新
+        updateTheme(data.economy);
+
+        // セレクトボックス生成
+        const select = document.getElementById('recipientSelect');
+        // 部署ごとにグループ化
+        const depts = [...new Set(userList.map(u => u.department))];
+        
+        depts.forEach(dept => {
+          const optgroup = document.createElement('optgroup');
+          optgroup.label = dept;
+          
+          const deptUsers = userList.filter(u => u.department === dept);
+          deptUsers.forEach(u => {
+            const option = document.createElement('option');
+            option.value = u.email;
+            option.text = u.name;
+            option.dataset.dept = u.department;
+            optgroup.appendChild(option);
+          });
+          select.appendChild(optgroup);
+        });
+      }
+      
+      function updateTheme(economy) {
+        // Bodyクラスの更新
+        const body = document.body;
+        body.classList.remove('theme-boom', 'theme-recession', 'theme-normal');
+        body.classList.add(`theme-${economy}`);
+        
+        // インジケーター更新
+        const indicator = document.getElementById('economyIndicator');
+        if (economy === 'boom') {
+          indicator.innerHTML = '<span class="text-xs font-bold text-red-500 animate-pulse">🔥 好景気</span>';
+        } else if (economy === 'recession') {
+          indicator.innerHTML = '<span class="text-xs font-bold text-blue-500">❄️ 停滞中</span>';
+        } else {
+          indicator.innerHTML = '<span class="text-xs font-bold text-green-500">🌱 通常</span>';
+        }
+      }
+
+      // コスト表示更新
+      function updateCostDisplay() {
+        const select = document.getElementById('recipientSelect');
+        const costInfo = document.getElementById('costInfo');
+        
+        if (!select.value) {
+          costInfo.classList.add('hidden');
+          return;
+        }
+        
+        const selectedOption = select.options[select.selectedIndex];
+        const targetDept = selectedOption.dataset.dept;
+        const isSame = targetDept === currentUser.department;
+        
+        const cost = isSame ? COST_SAME : COST_DIFF;
+        const text = isSame ? '同じ部署 (お得)' : '他部署 (感謝マシマシ)';
+        
+        document.getElementById('costValue').textContent = cost;
+        document.getElementById('deptRelationText').textContent = text;
+        costInfo.classList.remove('hidden');
+      }
+
+      // 送信処理
+      function handleSend(e) {
+        e.preventDefault();
+        
+        const email = document.getElementById('recipientSelect').value;
+        const message = document.getElementById('messageInput').value;
+        
+        if(!email || !message) return;
+        
+        // UI Loading
+        document.getElementById('loadingOverlay').classList.remove('hidden');
+        document.getElementById('submitBtn').disabled = true;
+
+        google.script.run
+          .withSuccessHandler(sendSuccess)
+          .withFailureHandler(sendFailure)
+          .sendAirCoin(email, message);
+      }
+
+      function sendSuccess(result) {
+        document.getElementById('loadingOverlay').classList.add('hidden');
+        document.getElementById('submitBtn').disabled = false;
+        
+        if (result.success) {
+          showToast(result.message);
+          // フォームクリア
+          document.getElementById('sendForm').reset();
+          document.getElementById('costInfo').classList.add('hidden');
+          // 残高更新
+          document.getElementById('walletBalance').textContent = result.newBalance;
+          currentUser.wallet_balance = result.newBalance; // ローカル変数も更新
+        } else {
+          alert(result.message); // 重要なエラーはAlertで確実に見せる
+        }
+      }
+
+      function sendFailure(error) {
+        document.getElementById('loadingOverlay').classList.add('hidden');
+        document.getElementById('submitBtn').disabled = false;
+        showError(error);
+      }
+
+      // トースト表示
+      function showToast(msg) {
+        const toast = document.getElementById('toast');
+        document.getElementById('toastMessage').textContent = msg;
+        toast.classList.remove('opacity-0');
+        setTimeout(() => {
+          toast.classList.add('opacity-0');
+        }, 3000);
+      }
+
+      function showError(error) {
+        console.error(error);
+        alert('エラーが発生しました: ' + error.message);
+      }
+    </script>
+  </body>
+</html>
