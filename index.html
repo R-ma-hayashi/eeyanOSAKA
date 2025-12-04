@@ -7,761 +7,363 @@
     <title>E-yan Coin App</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
     <style>
       @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-6px); } 100% { transform: translateY(0px); } }
       .coin-anim { animation: float 3s ease-in-out infinite; }
-      body { transition: background 0.5s ease; background-color: #f3f4f6; padding-bottom: 90px; }
-      .hidden { display: none !important; }
-
-      /* 送信演出: コイン・ハートが降り注ぐアニメーション */
-      @keyframes fall {
-        0% { transform: translateY(-10vh) rotate(0deg); opacity: 1; }
-        100% { transform: translateY(110vh) rotate(360deg); opacity: 0; }
-      }
-      .celebration-emoji {
-        position: fixed;
-        font-size: 2rem;
-        pointer-events: none;
-        z-index: 9999;
-        animation: fall linear forwards;
-      }
-      .loader {
-        border: 4px solid #f3f3f3;
-        border-top: 4px solid #6366f1;
-        border-radius: 50%;
-        width: 40px;
-        height: 40px;
-        animation: spin 1s linear infinite;
-      }
+      @keyframes slideUpFade { 0% { transform: translateY(20px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+      .toast-enter { animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
       @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .loader { border: 4px solid #f3f3f3; border-top: 4px solid #6366f1; border-radius: 50%; width: 32px; height: 32px; animation: spin 1s linear infinite; }
+      body { transition: background 0.8s ease; padding-bottom: 100px; overscroll-behavior-y: none; }
+      .hidden { display: none !important; }
       .tab-active { color: #4f46e5; }
       .tab-inactive { color: #9ca3af; }
-      .bg-boom { background-color: #fffbeb; }
-      .bg-depression { background-color: #f1f5f9; }
-      .fab-btn {
-        position: fixed;
-        bottom: 80px;
-        right: 20px;
-        z-index: 40;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-      }
       .scrollbar-hide::-webkit-scrollbar { display: none; }
       .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
     </style>
   </head>
   
-  <body class="min-h-screen text-gray-800 font-sans">
+  <body class="min-h-screen text-gray-800 font-sans bg-gray-50">
     
-    <!-- ヘッダー -->
-    <header class="bg-white/90 backdrop-blur-sm shadow-sm sticky top-0 z-40">
+    <!-- Loading -->
+    <div id="loadingOverlay" class="fixed inset-0 bg-white/90 z-[9999] flex flex-col items-center justify-center transition-opacity duration-300">
+      <div class="loader mb-3"></div>
+      <p id="loadingText" class="text-gray-500 text-sm font-bold">起動中...</p>
+    </div>
+
+    <!-- Header -->
+    <header class="sticky top-0 z-40 backdrop-blur-md bg-white/70 shadow-sm border-b border-white/20">
       <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
         <div class="flex items-center gap-2">
           <i class="fa-solid fa-coins text-yellow-500 text-2xl coin-anim"></i>
-          <h1 class="font-bold text-lg text-gray-800">E-yan Coin</h1>
+          <h1 class="font-bold text-lg text-gray-800 tracking-tight">E-yan Coin</h1>
         </div>
         <div id="headerWallet" class="hidden">
-          <div class="bg-yellow-100 text-yellow-800 px-3 py-1 rounded-full font-bold shadow-sm flex items-center">
+          <div class="bg-yellow-100/80 text-yellow-800 px-3 py-1 rounded-full font-bold shadow-sm flex items-center border border-yellow-200">
             <i class="fa-solid fa-wallet mr-2 text-sm"></i>
-            <span id="walletBalance">0</span>
+            <span id="walletBalance">--</span>
           </div>
         </div>
       </div>
     </header>
 
     <main class="max-w-md mx-auto p-4 space-y-6">
-
-      <!-- VIEW: 認証 -->
-      <div id="view-auth" class="flex flex-col items-center justify-center pt-10 space-y-8">
-        <div class="text-center space-y-2">
-          <div class="bg-white p-4 rounded-full shadow-md inline-block mb-4">
-            <i class="fa-solid fa-handshake-simple text-5xl text-indigo-500"></i>
-          </div>
-          <h2 class="text-2xl font-bold text-gray-800">感謝を伝えよう</h2>
-          <p class="text-gray-500 text-sm">大阪支社 コイン送金アプリ</p>
-        </div>
-        <button onclick="handleLoginClick()" class="w-full max-w-xs bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 px-6 rounded-xl shadow-lg transition active:scale-95">
-          <i class="fa-solid fa-right-to-bracket mr-2"></i> スタート
-        </button>
+      <!-- AUTH VIEW -->
+      <div id="view-auth" class="flex flex-col items-center justify-center py-10 space-y-6 hidden">
+         <div class="p-6 bg-white rounded-3xl shadow-xl shadow-indigo-100 text-center w-full">
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome!</h2>
+            <button onclick="handleLogin()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">はじめる</button>
+         </div>
       </div>
 
-      <!-- VIEW: 登録 -->
+      <!-- REGISTER VIEW -->
       <div id="view-register" class="hidden">
-        <div class="bg-white rounded-2xl shadow-lg border border-gray-100 p-6">
-          <h2 class="text-xl font-bold text-gray-800 mb-6">新規ユーザー登録</h2>
-          <form onsubmit="handleRegister(event)" class="space-y-6">
-            <div>
-              <label class="block text-sm font-bold text-gray-700 mb-2">お名前</label>
-              <input type="text" name="name" required placeholder="例: 山田 太郎" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none">
-            </div>
-            <div>
-              <label class="block text-sm font-bold text-gray-700 mb-2">所属部署</label>
-              <select name="department" id="registerDeptSelect" required class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none">
-                <option value="">読み込み中...</option>
-              </select>
-            </div>
-            <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg">登録する</button>
+        <div class="bg-white/90 backdrop-blur rounded-2xl shadow-lg p-6">
+          <h2 class="text-xl font-bold text-gray-800 mb-6">初回登録</h2>
+          <form onsubmit="handleRegister(event)" class="space-y-4">
+            <div><label class="block text-xs font-bold text-gray-500 mb-1">お名前</label><input type="text" name="name" required class="w-full p-3 bg-gray-50 rounded-xl outline-none"></div>
+            <div><label class="block text-xs font-bold text-gray-500 mb-1">所属部署</label><select name="department" id="registerDeptSelect" required class="w-full p-3 bg-gray-50 rounded-xl outline-none"></select></div>
+            <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl mt-4 shadow-md">登録する</button>
           </form>
         </div>
       </div>
 
-      <!-- VIEW: メイン -->
+      <!-- MAIN APP VIEW -->
       <div id="view-app" class="hidden">
-        
-        <button onclick="switchTab('tab-send')" class="fab-btn bg-gradient-to-r from-indigo-500 to-purple-600 text-white w-14 h-14 rounded-full flex items-center justify-center transition transform hover:scale-110 active:scale-95">
-           <i class="fa-regular fa-paper-plane text-2xl"></i>
-        </button>
+        <button onclick="switchTab('tab-send')" class="fixed bottom-24 right-5 z-40 bg-gradient-to-r from-indigo-500 to-purple-600 text-white w-14 h-14 rounded-full shadow-xl flex items-center justify-center transition hover:scale-105 active:scale-90"><i class="fa-regular fa-paper-plane text-2xl"></i></button>
 
-        <!-- TAB 1: ホーム -->
-        <div id="tab-home" class="space-y-6">
-          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 relative overflow-hidden">
-            <div class="relative z-10">
-              <div class="flex justify-between items-start mb-2">
-                <div>
-                   <p class="text-xs text-gray-500 mb-1" id="userDept">--</p>
-                   <h2 class="text-xl font-bold" id="userName">--</h2>
+        <!-- TAB: HOME -->
+        <div id="tab-home" class="space-y-5">
+          <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm border border-white/50 p-5">
+            <div class="flex justify-between items-start">
+              <div><p class="text-xs text-gray-500 mb-0.5" id="userDept">--</p><h2 class="text-xl font-bold text-gray-800" id="userName">--</h2></div>
+              <div class="flex flex-col items-end gap-1">
+                <div class="flex items-center bg-indigo-50 px-2 py-1 rounded-lg border border-indigo-100">
+                  <span id="rankAvatar" class="text-xl mr-1">🥺</span><span class="text-xs font-bold text-indigo-700" id="userRank">--</span><span id="mvpCrown" class="hidden ml-1 text-sm">👑</span>
                 </div>
-                <div class="flex flex-col items-end gap-2">
-                  <div class="flex items-center bg-indigo-50 px-2 py-1 rounded-lg">
-                    <span id="rankAvatar" class="text-xl mr-1">🥺</span>
-                    <span class="text-xs font-bold text-indigo-700" id="userRank">素浪人</span>
-                    <span id="mvpCrown" class="hidden ml-1">👑</span>
-                  </div>
-                  <button onclick="handleSettings()" class="text-gray-400 hover:text-indigo-600 transition">
-                    <i class="fa-solid fa-gear text-lg"></i>
-                  </button>
-                </div>
-              </div>
-              
-              <div class="mt-4 p-3 bg-gray-50 rounded-lg">
-                <p class="text-xs text-gray-500 mb-1">今月の景気 (全社流通量)</p>
-                <div class="flex items-center gap-2">
-                  <span id="economyIcon" class="text-3xl">🏠</span>
-                  <span id="economyText" class="font-bold text-gray-700 text-sm">読み込み中...</span>
-                </div>
-              </div>
-
-              <div class="mt-5">
-                 <div class="flex justify-between text-xs font-bold mb-1">
-                   <span class="text-gray-500">配る用コイン残高</span>
-                   <span id="progressText" class="text-indigo-600">あと--枚！</span>
-                 </div>
-                 <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                   <div id="coinProgressBar" class="h-full rounded-full transition-all duration-500" style="width: 100%"></div>
-                 </div>
-                 <p class="text-[10px] text-gray-400 mt-1 text-right">毎月1日にリセットされます！使い切ろう！</p>
               </div>
             </div>
+            <div class="mt-4 p-3 bg-gray-50/80 rounded-xl border border-gray-100 flex items-center justify-between">
+              <div><p class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Economy Status</p><p class="text-sm font-bold text-gray-700 flex items-center gap-2" id="economyStatusText">--</p></div>
+              <div class="text-2xl" id="economyIcon">☁️</div>
+            </div>
+            <div class="mt-5">
+               <div class="flex justify-between text-xs font-bold mb-1"><span class="text-gray-400">配布可能残高</span><span id="progressText" class="text-indigo-600">--</span></div>
+               <div class="w-full bg-gray-200 rounded-full h-2.5 overflow-hidden"><div id="coinProgressBar" class="h-full bg-indigo-500 rounded-full transition-all duration-1000" style="width: 0%"></div></div>
+               <div class="flex justify-between mt-1"><p class="text-[10px] text-gray-400">本日送信済み: <span id="dailySentCount">0</span>/20枚</p></div>
+            </div>
           </div>
-          
-          <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start">
-             <i class="fa-solid fa-circle-info text-blue-500 mt-1 mr-3"></i>
-             <div>
-               <h3 class="font-bold text-blue-800 text-sm">他部署へは10倍ボーナス！</h3>
-               <p class="text-xs text-blue-600 mt-1">異なる部署の人に送ると、あなたの消費はそのままで、相手には<span class="font-bold underline">10倍の価値</span>が届きます。</p>
-             </div>
-          </div>
+          <div class="bg-blue-50/80 border border-blue-100 p-4 rounded-xl flex gap-3"><i class="fa-solid fa-circle-info text-blue-500 mt-0.5"></i><div><h3 class="text-sm font-bold text-blue-800">他部署ボーナス</h3><p class="text-xs text-blue-600 mt-1">違う部署の人に送ると価値が<span class="font-bold underline">1.5倍</span>！</p></div></div>
         </div>
 
-        <!-- TAB 2: 送る -->
+        <!-- TAB: SEND -->
         <div id="tab-send" class="hidden space-y-4">
-          <div class="bg-white rounded-2xl shadow-sm p-6">
-            <h3 class="font-bold text-gray-700 mb-4 border-b pb-2">1. 相手を選ぶ</h3>
+          <div class="bg-white/90 backdrop-blur rounded-2xl shadow-sm p-5 pb-8">
+            <h3 class="text-sm font-bold text-gray-500 mb-3">1. だれに送る？</h3>
+            <div class="mb-4"><input type="text" id="recipientSearch" placeholder="名前や部署で検索..." class="w-full p-3 bg-gray-50 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-300 transition" oninput="filterRecipients()"></div>
+            <select id="recipientSelect" class="w-full p-3 bg-gray-50 border-none rounded-xl mb-6 outline-none appearance-none font-bold text-gray-700" onchange="updateEstimation()"><option value="">読み込み中...</option></select>
 
-            <!-- 最近送った人 -->
-            <div id="recentRecipientsSection" class="mb-4 hidden">
-              <p class="text-xs text-gray-500 mb-2">⏱️ 最近送った人</p>
-              <div id="recentRecipientsList" class="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                <!-- ボタンが動的に追加される -->
-              </div>
+            <h3 class="text-sm font-bold text-gray-500 mb-3">2. 何枚送る？</h3>
+            <div class="flex items-center justify-between bg-gray-50 rounded-xl p-2 mb-2">
+               <button onclick="stepAmount(-1)" class="w-12 h-12 bg-white rounded-lg shadow-sm text-gray-600 font-bold"><i class="fa-solid fa-minus"></i></button>
+               <div class="text-center"><span id="displayAmount" class="text-3xl font-bold text-indigo-600 font-mono">1</span><span class="text-xs text-gray-400 font-bold block">COINS</span></div>
+               <button onclick="stepAmount(1)" class="w-12 h-12 bg-white rounded-lg shadow-sm text-gray-600 font-bold"><i class="fa-solid fa-plus"></i></button>
             </div>
+            <div id="estimationBox" class="hidden bg-yellow-50 border border-yellow-100 rounded-lg p-3 mb-6 text-yellow-800 text-xs font-bold text-center"><i class="fa-solid fa-calculator mr-1"></i><span id="estimationResult">--</span></div>
 
-            <div class="mb-4">
-              <input type="text" id="recipientSearchInput" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm" placeholder="🔍 名前や部署で検索..." oninput="handleSearchRecipient()">
+            <h3 class="text-sm font-bold text-gray-500 mb-3">3. メッセージ</h3>
+            <textarea id="messageInput" rows="2" class="w-full p-3 bg-gray-50 border-none rounded-xl mb-2 text-sm outline-none" placeholder="ありがとう！"></textarea>
+            <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-hide mb-4">
+              <button type="button" onclick="addTag('🙏 ありがとう')" class="px-3 py-1 bg-gray-100 rounded-full text-xs font-bold">🙏 ありがとう</button>
+              <button type="button" onclick="addTag('👍 さすが')" class="px-3 py-1 bg-gray-100 rounded-full text-xs font-bold">👍 さすが</button>
             </div>
-            <select id="recipientSelect" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl mb-6 appearance-none" onchange="updateEstimatedValue()">
-              <option value="">リストから選択してください</option>
-            </select>
-
-            <h3 class="font-bold text-gray-700 mb-4 border-b pb-2">2. 枚数を決める</h3>
-            <div class="flex items-center gap-4 mb-2">
-               <button type="button" onclick="adjustAmount(-10)" class="w-10 h-10 rounded-full bg-gray-100 text-gray-600 font-bold hover:bg-gray-200">-</button>
-               <input type="number" id="sendAmount" value="10" min="1" class="flex-1 p-3 text-center text-xl font-bold border border-gray-200 rounded-xl" oninput="updateEstimatedValue()">
-               <button type="button" onclick="adjustAmount(10)" class="w-10 h-10 rounded-full bg-gray-100 text-gray-600 font-bold hover:bg-gray-200">+</button>
-            </div>
-            
-            <div id="estimationArea" class="bg-yellow-50 p-3 rounded-lg text-sm text-yellow-800 mb-6 hidden border border-yellow-100">
-               <p><i class="fa-solid fa-calculator mr-1"></i> <span id="estimationText">計算中...</span></p>
-            </div>
-
-            <h3 class="font-bold text-gray-700 mb-4 border-b pb-2">3. メッセージ</h3>
-            <textarea id="messageInput" rows="3" class="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl mb-2" placeholder="助かりました！ありがとう！(100文字以内)"></textarea>
-            
-            <div class="flex gap-2 mb-4 overflow-x-auto py-1 scrollbar-hide">
-               <button type="button" onclick="addEmoji('🙏')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🙏</button>
-               <button type="button" onclick="addEmoji('👍')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">👍</button>
-               <button type="button" onclick="addText('神')" class="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg font-bold">神</button>
-               <button type="button" onclick="addText('草')" class="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg font-bold">草</button>
-               <button type="button" onclick="addEmoji('🔥')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🔥</button>
-               <button type="button" onclick="addEmoji('🙇')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🙇</button>
-               <button type="button" onclick="addEmoji('🍺')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🍺</button>
-            </div>
-
-            <button onclick="handleSend()" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl shadow-md active:bg-indigo-800 transition">
-              送信する
-            </button>
+            <button onclick="submitSend()" id="sendBtn" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg transition disabled:opacity-50">送信する</button>
           </div>
         </div>
 
-        <!-- TAB 3: ランキング -->
+        <!-- TAB: RANKING -->
         <div id="tab-ranking" class="hidden space-y-6">
-          <div class="bg-white rounded-2xl shadow-sm p-4 border border-gray-100">
-             <h2 class="font-bold text-gray-700 mb-3"><i class="fa-solid fa-building-user mr-2 text-indigo-500"></i>部署対抗合戦</h2>
-             <div id="deptRankingChart" class="space-y-3 text-sm">
-                <div class="text-center text-gray-400 py-4">集計中...</div>
-             </div>
-          </div>
-
-          <div>
-            <h2 class="font-bold text-gray-600 mb-2 ml-2"><i class="fa-solid fa-trophy mr-1 text-yellow-500"></i>今月のMVP (受信数)</h2>
-            <div id="rankingList" class="space-y-3">
-               <div class="text-center text-gray-400 py-10">読み込み中...</div>
-            </div>
-          </div>
-
-          <div>
-            <h2 class="font-bold text-gray-600 mb-2 ml-2"><i class="fa-solid fa-hand-holding-heart mr-1 text-pink-500"></i>ベストギバー (送信数)</h2>
-            <div id="giverRankingList" class="space-y-3 pb-20">
-               <div class="text-center text-gray-400 py-10">読み込み中...</div>
-            </div>
-          </div>
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4"><h2 class="font-bold text-gray-700 mb-4 text-sm">今月のMVP</h2><div id="mvpList" class="space-y-3 min-h-[100px] text-center text-xs text-gray-400 py-4">読み込み中...</div></div>
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4"><h2 class="font-bold text-gray-700 mb-4 text-sm">部署対抗</h2><div id="deptList" class="space-y-3 min-h-[50px]"></div></div>
         </div>
 
-        <!-- TAB 4: 履歴 (マイページ) -->
-        <div id="tab-profile" class="hidden space-y-4">
-           <div class="bg-white p-4 rounded-xl shadow-sm text-center">
-              <p class="text-gray-500 text-xs mb-1">現在のランク</p>
-              <div class="text-4xl mb-2" id="profileRankAvatar">🥺</div>
-              <h2 class="font-bold text-lg" id="profileRankName">素浪人</h2>
-              <p class="text-xs text-gray-400 mt-2">来月1日にリセットされます</p>
-           </div>
-           
-           <h2 class="font-bold text-gray-600 ml-2">獲得履歴</h2>
-           <div id="historyList" class="space-y-3 pb-20">
-             <div class="text-center text-gray-400 py-10">読み込み中...</div>
-           </div>
-        </div>
-
+        <!-- TAB: HISTORY -->
+        <div id="tab-history" class="hidden space-y-4"><h2 class="text-lg font-bold text-gray-700 px-2">履歴</h2><div id="historyContainer" class="space-y-3 pb-20"><div class="text-center text-xs text-gray-400 py-10">読み込み中...</div></div></div>
       </div>
-
     </main>
-    
-    <!-- ナビゲーション -->
-    <nav id="bottomNav" class="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 pb-safe hidden z-50">
-      <div class="max-w-md mx-auto flex justify-around">
-        <button onclick="switchTab('tab-home')" class="flex-1 py-3 flex flex-col items-center tab-active" id="nav-home">
-          <i class="fa-solid fa-house text-xl mb-1"></i>
-          <span class="text-[10px] font-bold">ホーム</span>
-        </button>
-        <button onclick="switchTab('tab-send')" class="flex-1 py-3 flex flex-col items-center tab-inactive" id="nav-send">
-          <i class="fa-solid fa-gift text-xl mb-1"></i>
-          <span class="text-[10px] font-bold">送る</span>
-        </button>
-        <button onclick="switchTab('tab-ranking')" class="flex-1 py-3 flex flex-col items-center tab-inactive" id="nav-ranking">
-          <i class="fa-solid fa-trophy text-xl mb-1"></i>
-          <span class="text-[10px] font-bold">ランキング</span>
-        </button>
-        <button onclick="switchTab('tab-profile')" class="flex-1 py-3 flex flex-col items-center tab-inactive" id="nav-profile">
-          <i class="fa-solid fa-clock-rotate-left text-xl mb-1"></i>
-          <span class="text-[10px] font-bold">履歴</span>
-        </button>
+
+    <nav id="bottomNav" class="fixed bottom-0 w-full bg-white/90 backdrop-blur border-t border-gray-200 pb-safe hidden z-50">
+      <div class="flex justify-around items-center max-w-md mx-auto">
+        <button onclick="switchTab('tab-home')" id="nav-home" class="flex-1 py-3 flex flex-col items-center tab-active"><i class="fa-solid fa-house text-xl mb-1"></i><span class="text-[10px] font-bold">ホーム</span></button>
+        <button onclick="switchTab('tab-send')" id="nav-send" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-paper-plane text-xl mb-1"></i><span class="text-[10px] font-bold">送る</span></button>
+        <button onclick="switchTab('tab-ranking')" id="nav-ranking" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-chart-simple text-xl mb-1"></i><span class="text-[10px] font-bold">ランク</span></button>
+        <button onclick="switchTab('tab-history')" id="nav-history" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-clock-rotate-left text-xl mb-1"></i><span class="text-[10px] font-bold">履歴</span></button>
       </div>
     </nav>
-
-    <div id="loadingOverlay" class="fixed inset-0 bg-white/80 backdrop-blur-sm z-50 hidden flex flex-col items-center justify-center">
-      <div class="loader mb-4"></div>
-      <p id="loadingText" class="text-gray-600 font-bold">処理中...</p>
-    </div>
+    <div id="toast" class="fixed bottom-24 left-4 right-4 bg-gray-800 text-white px-4 py-3 rounded-xl shadow-2xl z-[100] hidden flex items-center justify-between"><div class="flex items-center gap-3"><i class="fa-solid fa-circle-check text-green-400 text-xl"></i><div class="text-sm"><p class="font-bold" id="toastTitle">Success</p><p class="text-xs text-gray-300" id="toastMsg">処理完了</p></div></div></div>
 
     <script>
-      let currentUser = null;
-      let loadedDepartments = [];
-      let allUserList = [];
-      let appConfig = {};
-
-      const RANK_MAP = {
-        '素浪人': '🥺',
-        '丁稚': '🐣',
-        '商人': '👘',
-        '豪商': '🐯',
-        '天下人': '👑'
-      };
-
-      // フラグ管理
-      let isRankingLoaded = false;
-      let isHistoryLoaded = false;
-      let isSuggestLoaded = false;
-      let recentRecipients = [];
-
-      function handleLoginClick() {
-        toggleLoading(true);
-        google.script.run.withSuccessHandler(onInitSuccess).withFailureHandler(onFailure).getInitialData();
+      // Mock Data (GAS環境外用)
+      if (typeof google === 'undefined') {
+         console.warn('Mock Mode');
+         window.google = { script: { run: {
+            withSuccessHandler: function(f) { this.s=f; return this; },
+            withFailureHandler: function(f) { this.f=f; return this; },
+            getInitialData: function() { setTimeout(()=>this.s({success:true, user:{name:'Mock User',department:'営業部',rank:'商人',wallet_balance:80,dailySent:5}, economy:'level2', config:{MULTIPLIER_DIFF_DEPT:1.5}, dataVersion:'999'}), 800); },
+            getUserListData: function() { setTimeout(()=>this.s({success:true, list:[['a@x.com','Aさん','営業部'],['b@x.com','Bさん','開発部']], from:'Mock'}), 500); },
+            sendAirCoin: function() { setTimeout(()=>this.s({success:true, message:'Mock Sent', newBalance:70, dailySent:6}), 800); },
+            getRankings: function() { setTimeout(()=>this.s({rankings:{mvp:[], dept:[]}}), 500); },
+            getUserHistory: function() { setTimeout(()=>this.s({history:[]}), 500); }
+         }}};
       }
 
-      function onInitSuccess(data) {
-        toggleLoading(false);
+      let currentUser = null;
+      let allUsers = []; // [{email, name, dept}, ...]
+      let appConfig = {};
+      let sendAmount = 1;
+      const RANK_MAP = { '素浪人': '🥺', '丁稚': '🐣', '商人': '👘', '豪商': '🐯', '天下人': '👑' };
+
+      window.onload = () => handleLogin();
+
+      function handleLogin() {
+        showLoading(true);
+        google.script.run.withSuccessHandler(initSuccess).withFailureHandler(initFail).getInitialData();
+      }
+
+      function initSuccess(data) {
+        showLoading(false);
         if (data.error === 'NOT_REGISTERED') {
-          loadedDepartments = data.departments || [];
-          generateDeptOptions(loadedDepartments);
+          renderDeptOptions(data.departments);
           document.getElementById('view-auth').classList.add('hidden');
           document.getElementById('view-register').classList.remove('hidden');
         } else if (data.success) {
-          initializeApp(data);
+          // 1. 最優先でUI描画 (自分の情報はすでにある)
+          currentUser = data.user;
+          appConfig = data.config;
+          updateUI();
+          updateEconomyUI(data.economy);
+          
+          document.getElementById('view-auth').classList.add('hidden');
+          document.getElementById('view-app').classList.remove('hidden');
+          document.getElementById('headerWallet').classList.remove('hidden');
+          document.getElementById('bottomNav').classList.remove('hidden');
+          switchTab('tab-home');
+
+          // 2. 遅延読み込み & localStorage同期 (重いユーザーリスト)
+          syncUserList(data.dataVersion);
         }
       }
 
-      function initializeApp(data) {
-        currentUser = data.user;
-        allUserList = data.userList;
-        loadedDepartments = data.departments;
-        appConfig = data.config;
+      function initFail(e) { showLoading(false); alert('Error: ' + e.message); }
 
-        updateUserUI();
-        
-        const ecoMap = {
-          'depression': { icon: '🥺 🍃 💸', text: '不況... (Lv.1)', bg: 'bg-depression' },
-          'normal':     { icon: '🐙 🏢 ☁️', text: '通常運転 (Lv.2)', bg: '' },
-          'boom':       { icon: '🐯 ❤️‍🔥 🎉 💰', text: '景気ええやん！(Lv.3)', bg: 'bg-boom' }
-        };
-        const ecoState = ecoMap[data.economy] || ecoMap['normal'];
-        document.getElementById('economyIcon').textContent = ecoState.icon;
-        document.getElementById('economyText').textContent = ecoState.text;
-        if(ecoState.bg) document.body.classList.add(ecoState.bg);
-        
-        renderRecipientSelect(allUserList);
-        
-        document.getElementById('view-auth').classList.add('hidden');
-        document.getElementById('view-register').classList.add('hidden');
-        document.getElementById('view-app').classList.remove('hidden');
-        document.getElementById('headerWallet').classList.remove('hidden');
-        document.getElementById('bottomNav').classList.remove('hidden');
-        
-        switchTab('tab-home');
+      // ★ ユーザーリスト同期ロジック (localStorage)
+      function syncUserList(serverVersion) {
+        const localVersion = localStorage.getItem('EYAN_DATA_VERSION');
+        const localData = localStorage.getItem('EYAN_USER_LIST');
+
+        if (localVersion === serverVersion && localData) {
+           console.log('Using Local Cache');
+           parseAndSetUsers(JSON.parse(localData));
+        } else {
+           console.log('Fetching New Data...');
+           // リスト取得 (非同期)
+           google.script.run.withSuccessHandler(res => {
+              if (res.success) {
+                 // 保存 (Array形式のまま保存して容量節約)
+                 localStorage.setItem('EYAN_DATA_VERSION', serverVersion);
+                 localStorage.setItem('EYAN_USER_LIST', JSON.stringify(res.list));
+                 parseAndSetUsers(res.list);
+              }
+           }).getUserListData();
+        }
       }
 
-      function updateUserUI() {
-        const avatar = RANK_MAP[currentUser.rank] || '🥺';
+      // 配列データをオブジェクトに変換してメモリ展開
+      function parseAndSetUsers(listArray) {
+        // [email, name, dept] -> {email, name, dept}
+        allUsers = listArray.map(row => ({
+          email: row[0],
+          name: row[1],
+          department: row[2]
+        }));
+        console.log('User List Loaded:', allUsers.length);
+        renderRecipientOptions(allUsers);
+      }
 
+      function updateUI() {
+        if(!currentUser) return;
         document.getElementById('userName').textContent = currentUser.name;
         document.getElementById('userDept').textContent = currentUser.department;
         document.getElementById('userRank').textContent = currentUser.rank;
-        document.getElementById('rankAvatar').textContent = avatar;
-        document.getElementById('profileRankName').textContent = currentUser.rank;
-        document.getElementById('profileRankAvatar').textContent = avatar;
+        document.getElementById('rankAvatar').textContent = RANK_MAP[currentUser.rank] || '🥺';
+        if (currentUser.isMVP) document.getElementById('mvpCrown').classList.remove('hidden');
+        document.getElementById('walletBalance').textContent = currentUser.wallet_balance;
+        const pct = Math.min((currentUser.wallet_balance / appConfig.INITIAL_COIN) * 100, 100);
+        document.getElementById('coinProgressBar').style.width = pct + '%';
+        document.getElementById('progressText').textContent = `あと${currentUser.wallet_balance}枚`;
+        document.getElementById('dailySentCount').textContent = currentUser.dailySent;
+      }
 
-        // 前月MVP王冠表示
-        const crownEl = document.getElementById('mvpCrown');
-        if (currentUser.isMVP) {
-          crownEl.classList.remove('hidden');
-          crownEl.title = '前月MVP';
+      function updateEconomyUI(level) {
+        const body = document.body;
+        const txt = document.getElementById('economyStatusText');
+        const icon = document.getElementById('economyIcon');
+        body.className = "min-h-screen text-gray-800 font-sans transition-colors duration-1000";
+        if (level === 'level3') { 
+          body.classList.add('bg-gradient-to-br', 'from-pink-50', 'to-rose-100');
+          txt.innerHTML = '<span class="text-pink-600">好景気 (Lv.3)</span>'; icon.textContent = '🎉';
+        } else if (level === 'level2') {
+          body.classList.add('bg-gradient-to-br', 'from-purple-50', 'to-indigo-100');
+          txt.innerHTML = '<span class="text-indigo-600">通常 (Lv.2)</span>'; icon.textContent = '🏢';
         } else {
-          crownEl.classList.add('hidden');
-        }
-        
-        const balance = Number(currentUser.wallet_balance);
-        document.getElementById('walletBalance').textContent = balance;
-        
-        const maxCoin = 1000;
-        const percent = Math.min((balance / maxCoin) * 100, 100);
-        const bar = document.getElementById('coinProgressBar');
-        
-        bar.style.width = percent + '%';
-        bar.className = 'h-full rounded-full transition-all duration-500 ';
-        if (balance > 700) {
-           bar.classList.add('bg-red-500');
-           document.getElementById('progressText').textContent = `あと${balance}枚配らな！`;
-           document.getElementById('progressText').className = "text-red-500 font-bold";
-        } else if (balance > 300) {
-           bar.classList.add('bg-yellow-400');
-           document.getElementById('progressText').textContent = `あと${balance}枚！`;
-           document.getElementById('progressText').className = "text-yellow-600 font-bold";
-        } else {
-           bar.classList.add('bg-green-500');
-           document.getElementById('progressText').textContent = `残り${balance}枚、ええ感じ！`;
-           document.getElementById('progressText').className = "text-green-600 font-bold";
+          body.classList.add('bg-gradient-to-br', 'from-sky-50', 'to-blue-100');
+          txt.innerHTML = '<span class="text-blue-600">不況 (Lv.1)</span>'; icon.textContent = '🍃';
         }
       }
 
-      // --- タブ制御 (高速化: 必要な時だけロード) ---
       function switchTab(tabId) {
-        ['tab-home', 'tab-send', 'tab-ranking', 'tab-profile'].forEach(id => {
-          document.getElementById(id).classList.add('hidden');
+        ['tab-home', 'tab-send', 'tab-ranking', 'tab-history'].forEach(id => document.getElementById(id).classList.add('hidden'));
+        ['nav-home', 'nav-send', 'nav-ranking', 'nav-history'].forEach(id => {
+          const el = document.getElementById(id);
+          el.classList.remove('tab-active'); el.classList.add('tab-inactive');
+          el.querySelector('i').classList.remove('text-indigo-600');
         });
         document.getElementById(tabId).classList.remove('hidden');
+        const active = document.getElementById(tabId.replace('tab', 'nav'));
+        active.classList.add('tab-active'); active.classList.remove('tab-inactive');
+        active.querySelector('i').classList.add('text-indigo-600');
 
-        const navIds = {
-          'tab-home': 'nav-home',
-          'tab-send': 'nav-send',
-          'tab-ranking': 'nav-ranking',
-          'tab-profile': 'nav-profile'
-        };
-        Object.values(navIds).forEach(navId => {
-          const el = document.getElementById(navId);
-          el.classList.remove('tab-active');
-          el.classList.add('tab-inactive');
-        });
-        document.getElementById(navIds[tabId]).classList.add('tab-active');
-        document.getElementById(navIds[tabId]).classList.remove('tab-inactive');
-
-        // ★必要な時だけデータを読み込む
-        if (tabId === 'tab-ranking' && !isRankingLoaded) {
-          loadRankings();
-        } else if (tabId === 'tab-profile' && !isHistoryLoaded) {
-          loadHistory();
-        } else if (tabId === 'tab-send' && !isSuggestLoaded) {
-          loadRecentRecipients();
-        }
+        if (tabId === 'tab-ranking') loadRankings();
+        if (tabId === 'tab-history') loadHistory();
       }
 
-      function handleSettings() { alert('プロフィール編集・設定画面は準備中です！'); }
-
-      function addEmoji(emoji) {
-        const input = document.getElementById('messageInput');
-        input.value += emoji;
+      function stepAmount(diff) {
+        let next = sendAmount + diff;
+        if (next < 1) next = 1; if (next > 10) next = 10;
+        sendAmount = next;
+        document.getElementById('displayAmount').textContent = sendAmount;
+        updateEstimation();
       }
-
-      function addText(text) {
-        const input = document.getElementById('messageInput');
-        input.value += text;
-      }
-
-      function adjustAmount(val) {
-        const input = document.getElementById('sendAmount');
-        let current = parseInt(input.value) || 0;
-        let next = current + val;
-        if (next < 1) next = 1;
-        input.value = next;
-        updateEstimatedValue();
-      }
-
-      function updateEstimatedValue() {
-        const email = document.getElementById('recipientSelect').value;
-        const amount = parseInt(document.getElementById('sendAmount').value) || 0;
-        const area = document.getElementById('estimationArea');
-        const text = document.getElementById('estimationText');
-
-        if (!email || amount <= 0) {
-          area.classList.add('hidden');
-          return;
-        }
-
-        const target = allUserList.find(u => u.email === email);
-        if (!target) return;
-
-        const isSame = target.department === currentUser.department;
-        const multiplier = isSame ? 1 : (appConfig.MULTIPLIER_DIFF_DEPT || 10);
-        const gained = amount * multiplier;
-
-        area.classList.remove('hidden');
-        if (isSame) {
-          text.innerHTML = `同部署: 消費<b>${amount}</b> → 相手の実績<b>+${gained}</b>`;
-        } else {
-          text.innerHTML = `他部署ボーナス！: 消費<b>${amount}</b> → 相手の実績<b>+${gained}</b> (${multiplier}倍!)`;
-        }
-      }
-
-      function handleSend() {
-        const email = document.getElementById('recipientSelect').value;
-        const amount = document.getElementById('sendAmount').value;
-        const msg = document.getElementById('messageInput').value;
-
-        if (!email || !amount || !msg) { alert('すべての項目を入力してください'); return; }
-        if (msg.length > 100) { alert('メッセージは100文字以内でお願いします'); return; }
-        if(!confirm(`${amount}枚のコインを送りますか？`)) return;
-
-        toggleLoading(true, '送信中...');
-        google.script.run.withSuccessHandler(res => {
-          toggleLoading(false);
-          if (res.success) {
-            // 送信演出を実行
-            playCelebration();
-
-            setTimeout(() => {
-              alert(res.message);
-              currentUser.wallet_balance = res.newBalance;
-              updateUserUI();
-
-              // 履歴とサジェストをリロードさせるためにフラグを折る
-              isHistoryLoaded = false;
-              isSuggestLoaded = false;
-
-              document.getElementById('messageInput').value = '';
-              document.getElementById('recipientSearchInput').value = '';
-              renderRecipientSelect(allUserList);
-              switchTab('tab-home');
-            }, 500);
-          } else {
-            alert(res.message);
-          }
-        }).withFailureHandler(onFailure).sendAirCoin(email, msg, amount);
-      }
-
-      // 送信演出: コインとハートが降り注ぐ
-      function playCelebration() {
-        const emojis = ['💰', '🪙', '❤️', '💖', '✨', '🎉'];
-        const count = 20; // 降らせる絵文字の数
-
-        for (let i = 0; i < count; i++) {
-          setTimeout(() => {
-            const emoji = document.createElement('div');
-            emoji.className = 'celebration-emoji';
-            emoji.textContent = emojis[Math.floor(Math.random() * emojis.length)];
-            emoji.style.left = Math.random() * 100 + '%';
-            emoji.style.animationDuration = (2 + Math.random() * 2) + 's';
-            emoji.style.animationDelay = '0s';
-            document.body.appendChild(emoji);
-
-            // アニメーション終了後に要素を削除
-            setTimeout(() => emoji.remove(), 4000);
-          }, i * 100);
-        }
-      }
-
-      function handleSearchRecipient() {
-        const keyword = document.getElementById('recipientSearchInput').value.trim();
-        if (!keyword) { renderRecipientSelect(allUserList); return; }
-        const filtered = allUserList.filter(u =>
-          u.name.indexOf(keyword) !== -1 || u.department.indexOf(keyword) !== -1
-        );
-        renderRecipientSelect(filtered);
-      }
-
-      // 最近送った人を読み込む
-      function loadRecentRecipients() {
-        google.script.run.withSuccessHandler(res => {
-          if (!res.success) return;
-          recentRecipients = res.recipients;
-          renderRecentRecipients();
-          isSuggestLoaded = true;
-        }).getRecentRecipients(5);
-      }
-
-      // 最近送った人を表示
-      function renderRecentRecipients() {
-        if (!recentRecipients || recentRecipients.length === 0) return;
-
-        const container = document.getElementById('recentRecipientsList');
-        const section = document.getElementById('recentRecipientsSection');
-        container.innerHTML = '';
-
-        recentRecipients.forEach(email => {
-          const user = allUserList.find(u => u.email === email);
-          if (!user) return;
-
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'px-3 py-2 bg-indigo-50 text-indigo-700 rounded-lg text-sm font-bold whitespace-nowrap hover:bg-indigo-100 active:scale-95 transition';
-          btn.textContent = user.name;
-          btn.onclick = () => selectRecipient(email);
-          container.appendChild(btn);
-        });
-
-        section.classList.remove('hidden');
-      }
-
-      // サジェストから選択
-      function selectRecipient(email) {
-        document.getElementById('recipientSelect').value = email;
-        updateEstimatedValue();
-      }
-
-      function renderRecipientSelect(users) {
-         const select = document.getElementById('recipientSelect');
-         select.innerHTML = '<option value="">選択してください</option>';
-         const groups = {};
-         users.forEach(u => {
-           if(!groups[u.department]) groups[u.department] = [];
-           groups[u.department].push(u);
-         });
-         Object.keys(groups).forEach(dept => {
-           const grp = document.createElement('optgroup');
-           grp.label = dept;
-           groups[dept].forEach(u => {
-             const opt = document.createElement('option');
-             opt.value = u.email;
-             opt.textContent = u.name;
-             grp.appendChild(opt);
-           });
-           select.appendChild(grp);
-         });
-      }
-
-      // --- 読み込み & 描画 ---
-
-      function loadRankings() {
-        const rankList = document.getElementById('rankingList');
-        rankList.innerHTML = '<div class="text-center text-gray-400 py-10"><div class="loader mx-auto mb-2 w-6 h-6 border-2"></div>ランキング集計中...</div>';
-
-        google.script.run.withSuccessHandler(res => {
-          if (!res.success) return;
-          renderRankings(res.rankings.mvp);
-          renderGiverRanking(res.rankings.giver);
-          renderDeptRanking(res.rankings.dept);
-          isRankingLoaded = true; // ロード完了フラグ
-        }).getRankings(); // ★分離した関数を呼ぶ
-      }
-
-      function loadHistory() {
-        const histList = document.getElementById('historyList');
-        histList.innerHTML = '<div class="text-center text-gray-400 py-10"><div class="loader mx-auto mb-2 w-6 h-6 border-2"></div>履歴を取得中...</div>';
-
-        google.script.run.withSuccessHandler(res => {
-          if (!res.success) return;
-          renderHistory(res.history);
-          isHistoryLoaded = true; // ロード完了フラグ
-        }).getUserHistory(); // ★分離した関数を呼ぶ
-      }
-
-      function renderRankings(list) {
-        const container = document.getElementById('rankingList');
-        container.innerHTML = '';
-        if (list.length === 0) {
-          container.innerHTML = '<div class="text-center text-gray-400">データがありません</div>';
-          return;
-        }
-        list.forEach((item, index) => {
-           const rankIcon = index < 3 ? ['🥇','🥈','🥉'][index] : `<span class="font-bold text-gray-500 w-6 inline-block text-center">${index+1}</span>`;
-           const div = document.createElement('div');
-           div.className = "flex items-center bg-white p-3 rounded-xl shadow-sm border border-gray-100";
-           div.innerHTML = `
-             <div class="text-xl mr-3">${rankIcon}</div>
-             <div class="flex-1">
-               <div class="font-bold text-sm">${item.name}</div>
-               <div class="text-xs text-gray-400">${item.dept}</div>
-             </div>
-             <div class="font-bold text-indigo-600">${item.score} pt</div>
-           `;
-           container.appendChild(div);
-        });
-      }
-
-      function renderGiverRanking(list) {
-        const container = document.getElementById('giverRankingList');
-        container.innerHTML = '';
-        if (!list || list.length === 0) {
-          container.innerHTML = '<div class="text-center text-gray-400">データがありません</div>';
-          return;
-        }
-        list.forEach((item, index) => {
-           const rankIcon = index < 3 ? ['🥇','🥈','🥉'][index] : `<span class="font-bold text-gray-500 w-6 inline-block text-center">${index+1}</span>`;
-           const div = document.createElement('div');
-           div.className = "flex items-center bg-white p-3 rounded-xl shadow-sm border border-gray-100";
-           div.innerHTML = `
-             <div class="text-xl mr-3">${rankIcon}</div>
-             <div class="flex-1">
-               <div class="font-bold text-sm">${item.name}</div>
-             </div>
-             <div class="font-bold text-pink-600">${item.count} 回</div>
-           `;
-           container.appendChild(div);
-        });
-      }
-
-      function renderDeptRanking(list) {
-         const container = document.getElementById('deptRankingChart');
-         container.innerHTML = '';
-         if (!list || list.length === 0) {
-            container.innerHTML = '<div class="text-center text-gray-400 text-xs">データ不足</div>';
-            return;
-         }
-         const maxScore = list[0].score || 1;
-         list.slice(0, 5).forEach(item => { 
-            const percent = (item.score / maxScore) * 100;
-            const div = document.createElement('div');
-            div.innerHTML = `
-               <div class="flex justify-between text-xs mb-1">
-                  <span class="font-bold text-gray-700">${item.name}</span>
-                  <span class="text-indigo-600 font-bold">${item.score}</span>
-               </div>
-               <div class="w-full bg-gray-100 rounded-full h-2">
-                  <div class="bg-indigo-500 h-2 rounded-full" style="width: ${percent}%"></div>
-               </div>
-            `;
-            container.appendChild(div);
-         });
-      }
-
-      function renderHistory(list) {
-        const container = document.getElementById('historyList');
-        container.innerHTML = '';
-        if (list.length === 0) {
-          container.innerHTML = '<div class="text-center text-gray-400">履歴がありません</div>';
-          return;
-        }
-        list.forEach(item => {
-           const date = new Date(item.timestamp);
-           const dateStr = `${date.getMonth()+1}/${date.getDate()} ${date.getHours()}:${date.getMinutes().toString().padStart(2, '0')}`;
-           const div = document.createElement('div');
-           div.className = "bg-white p-4 rounded-xl shadow-sm border border-gray-100 relative overflow-hidden";
-           const bonusClass = item.amount < item.value ? 'bg-yellow-50' : '';
-           if(bonusClass) div.classList.add(bonusClass);
-
-           div.innerHTML = `
-             <div class="flex justify-between items-start mb-2">
-               <div>
-                 <span class="text-xs text-gray-400">${dateStr}</span>
-                 <h4 class="font-bold text-sm text-gray-800">${item.sender_name} <span class="text-xs font-normal text-gray-500">(${item.sender_dept})</span></h4>
-               </div>
-               <div class="text-right">
-                 <div class="font-bold text-indigo-600">+${item.value}</div>
-                 ${item.amount < item.value ? '<span class="text-[10px] text-yellow-600 font-bold px-1 border border-yellow-200 rounded">他部署BONUS!</span>' : ''}
-               </div>
-             </div>
-             <p class="text-sm text-gray-600 bg-gray-50 p-2 rounded">${item.message}</p>
-           `;
-           container.appendChild(div);
-        });
-      }
-
-      function handleRegister(e) {
-        e.preventDefault();
-        const form = e.target;
-        if(!confirm('登録しますか？')) return;
-        toggleLoading(true, '登録中...');
-        google.script.run.withSuccessHandler(res => {
-           if(res.success) {
-             alert(res.message);
-             handleLoginClick();
-           } else {
-             toggleLoading(false);
-             alert(res.message);
-           }
-        }).registerNewUser({ name: form.name.value, department: form.department.value });
-      }
+      function addTag(t) { const a=document.getElementById('messageInput'); a.value=(a.value+' '+t).trim(); }
       
-      function generateDeptOptions(list) {
-        const select = document.getElementById('registerDeptSelect');
-        select.innerHTML = '<option value="">選択してください</option>';
-        list.forEach(dept => {
-          const opt = document.createElement('option');
-          opt.value = dept;
-          opt.textContent = dept;
-          select.appendChild(opt);
+      function filterRecipients() {
+        const val = document.getElementById('recipientSearch').value.toLowerCase();
+        const filtered = val ? allUsers.filter(u=>u.name.toLowerCase().includes(val)||u.department.toLowerCase().includes(val)) : allUsers;
+        renderRecipientOptions(filtered);
+      }
+      function renderRecipientOptions(list) {
+        const sel = document.getElementById('recipientSelect');
+        sel.innerHTML = '<option value="">選択してください</option>';
+        const grps = {};
+        list.forEach(u=>{ if(!grps[u.department]) grps[u.department]=[]; grps[u.department].push(u); });
+        Object.keys(grps).forEach(d=>{
+           const g = document.createElement('optgroup'); g.label=d;
+           grps[d].forEach(u=>{ const o=document.createElement('option'); o.value=u.email; o.textContent=u.name; g.appendChild(o); });
+           sel.appendChild(g);
         });
       }
+      function updateEstimation() {
+         const email = document.getElementById('recipientSelect').value;
+         const box = document.getElementById('estimationBox');
+         if(!email) { box.classList.add('hidden'); return; }
+         const t = allUsers.find(u=>u.email===email);
+         if(!t) return;
+         const same = t.department === currentUser.department;
+         const m = same ? 1 : (appConfig.MULTIPLIER_DIFF_DEPT||1.5);
+         const g = Math.floor(sendAmount * m);
+         box.classList.remove('hidden');
+         document.getElementById('estimationResult').textContent = same ? `同部署: 相手に ${g} pt` : `他部署: 相手に ${g} pt (${m}倍!)`;
+      }
+      function submitSend() {
+         const email = document.getElementById('recipientSelect').value;
+         const msg = document.getElementById('messageInput').value;
+         if(!email || !msg) return alert('入力不備あり');
+         if(!confirm(`${sendAmount}枚送信しますか？`)) return;
+         
+         const btn = document.getElementById('sendBtn'); btn.disabled=true;
+         google.script.run.withSuccessHandler(res=>{
+            btn.disabled=false;
+            if(res.success) {
+               showToast('送信完了', res.message);
+               currentUser.wallet_balance = res.newBalance;
+               currentUser.dailySent = res.dailySent;
+               updateUI();
+               document.getElementById('messageInput').value='';
+               document.getElementById('recipientSelect').value='';
+               switchTab('tab-home');
+            } else alert(res.message);
+         }).withFailureHandler(e=>{ btn.disabled=false; alert(e.message); }).sendAirCoin(email, msg, sendAmount);
+      }
 
-      function toggleLoading(show, msg) {
-        const el = document.getElementById('loadingOverlay');
-        if(show) {
-          if(msg) document.getElementById('loadingText').textContent = msg;
-          el.classList.remove('hidden');
-        } else {
-          el.classList.add('hidden');
-        }
+      function loadRankings() { google.script.run.withSuccessHandler(r=>{ if(r.success) renderRankings(r.rankings); }).getRankings(); }
+      function renderRankings(d) {
+         const m=document.getElementById('mvpList'); m.innerHTML='';
+         d.mvp.forEach((u,i)=>{
+            const ic=i<3?['🥇','🥈','🥉'][i]:i+1;
+            m.innerHTML+=`<div class="flex justify-between p-2 border-b border-gray-100"><div class="flex gap-2 w-full"><span class="w-6 text-center">${ic}</span><div><p class="text-xs font-bold">${u.name}</p><p class="text-[10px] text-gray-400">${u.dept}</p></div></div><div class="text-sm font-bold text-indigo-600">${u.score}</div></div>`;
+         });
+         const dp=document.getElementById('deptList'); dp.innerHTML='';
+         const max=d.dept[0]?d.dept[0].score:1;
+         d.dept.forEach(x=>{
+            const p=(x.score/max)*100;
+            dp.innerHTML+=`<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="font-bold">${x.name}</span><span class="text-indigo-500">${x.score}</span></div><div class="bg-gray-100 rounded-full h-1.5"><div class="bg-indigo-400 h-1.5 rounded-full" style="width:${p}%"></div></div></div>`;
+         });
       }
-      function onFailure(e) {
-        toggleLoading(false);
-        alert('エラー: ' + e.message);
+      function loadHistory() { google.script.run.withSuccessHandler(r=>{ if(r.success) renderHistory(r.history); }).getUserHistory(); }
+      function renderHistory(h) {
+         const c=document.getElementById('historyContainer'); c.innerHTML='';
+         if(h.length===0) return c.innerHTML='<p class="text-center text-gray-400 text-xs">履歴なし</p>';
+         h.forEach(x=>{
+            const d=new Date(x.timestamp);
+            const ds=`${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+            c.innerHTML+=`<div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100"><div class="flex justify-between"><div><p class="text-[10px] text-gray-400">${ds}</p><p class="text-sm font-bold">${x.sender_id}</p></div><p class="text-lg font-bold text-indigo-600">+${x.value}</p></div><p class="text-xs bg-gray-50 p-2 mt-1 rounded">${x.message}</p></div>`;
+         });
       }
+      function renderDeptOptions(l) { const s=document.getElementById('registerDeptSelect'); s.innerHTML=''; l.forEach(d=>{const o=document.createElement('option'); o.value=d; o.textContent=d; s.appendChild(o);}); }
+      function handleRegister(e) { e.preventDefault(); showLoading(true); google.script.run.withSuccessHandler(r=>{ if(r.success) handleLogin(); }).registerNewUser({name:e.target.name.value, department:e.target.department.value}); }
+      function showToast(t,m) { const e=document.getElementById('toast'); document.getElementById('toastTitle').textContent=t; document.getElementById('toastMsg').textContent=m; e.classList.remove('hidden','toast-enter'); void e.offsetWidth; e.classList.add('toast-enter'); setTimeout(()=>e.classList.add('hidden'), 4000); }
+      function showLoading(b) { const e=document.getElementById('loadingOverlay'); b?e.classList.remove('hidden'):e.classList.add('hidden'); }
     </script>
   </body>
 </html>
