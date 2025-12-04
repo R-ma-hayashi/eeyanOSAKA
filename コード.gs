@@ -1,34 +1,36 @@
 /**
- * E-yan Coin App - 大阪支社 (高速化対応版 v2.3)
- * 仕様書v2対応 + パフォーマンスチューニング
+ * E-yan Coin App - 大阪支社 (v4.1 Full Implementation)
+ * * 【高速化対応】
+ * 1. Lazy Loading: ユーザーリストは別便で取得
+ * 2. Array-ification: データ通信量を配列化で削減
+ * 3. Config: シート読み込みを廃止し定数化
+ * 4. JSON Storage: ユーザーリストをJSONファイルとしてDriveにキャッシュ
  */
 
-// --- Configuration ---
-// ★★★ スプレッドシートID ★★★
-const SS_ID = '1E0qf3XM-W8TM5HZ_SrPPoGAV4kwObvS6FmQdaFR3Bpw';
+// --- ★設定エリア (Configシートの代わり) ---
+const APP_CONFIG = {
+  INITIAL_COIN: 100,           // 月初の所持コイン
+  MULTIPLIER_DIFF_DEPT: 1.5,   // 他部署倍率
+  MESSAGE_MAX_LENGTH: 100,     // メッセージ文字数上限
+  ECONOMY_THRESHOLD_L2: 10000, // 景気Lv2閾値
+  ECONOMY_THRESHOLD_L3: 50000, // 景気Lv3閾値
+  REMINDER_THRESHOLD: 50,      // リマインド閾値
+  
+  // ID設定
+  SS_ID: '1E0qf3XM-W8TM5HZ_SrPPoGAV4kwObvS6FmQdaFR3Bpw', // メインSS
+  ARCHIVE_SS_ID: '1Gk3B_yd0q-sqskmQwHBsWk0PfYbSqfD0UdzYYiMhN5w', // アーカイブSS
+  
+  // ★手順で生成されたJSONファイルIDをここに貼る
+  JSON_FILE_ID: '' 
+};
 
+// シート名定義
 const SHEET_NAMES = {
   USERS: 'Users',
   TRANSACTIONS: 'Transactions',
-  CONFIG: 'Config',
   DEPARTMENTS: 'Departments',
-  ARCHIVE: 'Archive_Log',
+  ARCHIVE_LOG: 'Archive_Log',
   MVP_HISTORY: 'MVP_History'
-};
-
-const CACHE_DURATION = {
-  USER_LIST: 30,
-  ECONOMY: 600,
-  DEPARTMENTS: 3600,
-  RANKINGS: 1800 // ランキングは30分キャッシュ
-};
-
-const DEFAULT_CONFIG = {
-  INITIAL_COIN: 1000,
-  MULTIPLIER_DIFF_DEPT: 10,
-  MESSAGE_MAX_LENGTH: 100,
-  ECONOMY_THRESHOLD_L2: 10000,
-  ECONOMY_THRESHOLD_L3: 50000
 };
 
 // --- Web App Entry Points ---
@@ -41,170 +43,227 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-// --- Core Logic : 初期データ取得 ---
+// --- API 1: 起動直後の軽量データ取得 (自分の情報のみ) ---
 
 function getInitialData() {
   const email = Session.getActiveUser().getEmail();
   try {
-    const cache = CacheService.getScriptCache();
+    const ss = getSpreadsheet();
+    const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
     
-    // ユーザー一覧取得 (キャッシュ活用)
-    let usersMap;
-    const cachedUsers = cache.get('ALL_USERS_DATA');
-    if (cachedUsers) {
-      usersMap = JSON.parse(cachedUsers);
-    } else {
-      usersMap = fetchAndCacheUsersData();
+    // ユーザー検索
+    const data = userSheet.getDataRange().getValues();
+    const header = data.shift();
+    const colIdx = {};
+    header.forEach((h, i) => colIdx[h] = i);
+    
+    let myRow = null;
+    for(let i=0; i<data.length; i++) {
+      if(data[i][colIdx.user_id] === email) {
+        myRow = data[i];
+        break;
+      }
     }
 
-    const departments = getDepartmentsCached();
-    const currentUser = usersMap[email];
-
-    if (!currentUser) {
+    if (!myRow) {
       return {
         error: 'NOT_REGISTERED',
-        email: email,
-        departments: departments
+        departments: getDepartmentsCached()
       };
     }
 
-    // 前月MVP情報を取得
+    const currentUser = {
+      user_id: myRow[colIdx.user_id],
+      name: myRow[colIdx.name],
+      department: myRow[colIdx.department],
+      rank: myRow[colIdx.rank],
+      wallet_balance: myRow[colIdx.wallet_balance],
+      lifetime_received: myRow[colIdx.lifetime_received],
+      memo: myRow[colIdx.memo]
+    };
+
     const lastMonthMVP = getLastMonthMVP();
     currentUser.isMVP = (lastMonthMVP === email);
 
-    // フロントエンド用ユーザーリスト (軽量化のため必要な情報のみ)
-    const userList = Object.values(usersMap)
-      .filter(u => u.user_id !== email)
-      .map(u => ({
-        email: u.user_id,
-        name: u.name,
-        department: u.department
-      }));
+    let dailySent = 0;
+    try {
+      if (currentUser.memo) {
+        const memoObj = JSON.parse(currentUser.memo);
+        const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+        if (memoObj.last_sent_date === todayStr) {
+          dailySent = memoObj.daily_total || 0;
+        }
+      }
+    } catch (e) {}
+    currentUser.dailySent = dailySent;
 
-    // 景気状態
-    let economyState = cache.get('ECONOMY_STATE');
+    // 景気状態 (キャッシュ使用)
+    const cache = CacheService.getScriptCache();
+    let economyState = cache.get('ECONOMY_STATE_v4');
     if (!economyState) {
       economyState = analyzeEconomyState();
-      cache.put('ECONOMY_STATE', economyState, CACHE_DURATION.ECONOMY);
+      cache.put('ECONOMY_STATE_v4', economyState, 600);
+    }
+    
+    let dataVersion = new Date().getTime().toString();
+    if (APP_CONFIG.JSON_FILE_ID) {
+      try {
+        const file = DriveApp.getFileById(APP_CONFIG.JSON_FILE_ID);
+        dataVersion = file.getLastUpdated().getTime().toString();
+      } catch(e) { console.warn('JSON File access error', e); }
     }
 
     return {
       success: true,
       user: currentUser,
-      userList: userList,
       economy: economyState,
-      departments: departments,
-      config: getConfigCached()
+      config: APP_CONFIG,
+      dataVersion: dataVersion
     };
 
   } catch (e) {
     console.error('Error:', e);
-    throw new Error('データ読み込みエラー: ' + e.message);
+    throw new Error('起動エラー: ' + e.message);
   }
+}
+
+// --- API 2: ユーザーリスト取得 (JSONファイル経由 & 配列化) ---
+
+function getUserListData() {
+  try {
+    let usersArray = [];
+    if (APP_CONFIG.JSON_FILE_ID) {
+      try {
+        const file = DriveApp.getFileById(APP_CONFIG.JSON_FILE_ID);
+        const content = file.getBlob().getDataAsString();
+        usersArray = JSON.parse(content);
+        return { success: true, list: usersArray, from: 'Drive' };
+      } catch(e) {
+        console.error('JSON read failed', e);
+      }
+    }
+    const ss = getSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+    const data = sheet.getDataRange().getValues();
+    data.shift(); 
+    usersArray = data.map(row => [row[0], row[1], row[2]]);
+    return { success: true, list: usersArray, from: 'Sheet' };
+  } catch(e) {
+    return { success: false, message: e.message };
+  }
+}
+
+// --- 管理用: JSON手動更新 ---
+function admin_updateUserJson() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  const data = sheet.getDataRange().getValues();
+  data.shift(); 
+  const simpleList = data.map(row => [row[0], row[1], row[2]]);
+  const jsonString = JSON.stringify(simpleList);
+  
+  let file;
+  if (APP_CONFIG.JSON_FILE_ID) {
+    try {
+      file = DriveApp.getFileById(APP_CONFIG.JSON_FILE_ID);
+      file.setContent(jsonString);
+    } catch(e) {
+      file = DriveApp.createFile('EyanCoin_UserList.json', jsonString, MimeType.PLAIN_TEXT);
+    }
+  } else {
+    file = DriveApp.createFile('EyanCoin_UserList.json', jsonString, MimeType.PLAIN_TEXT);
+  }
+  console.log('JSON file created/updated. ID:', file.getId());
+  return file.getId();
 }
 
 // --- Core Logic : 送金処理 ---
 
 function sendAirCoin(receiverEmail, comment, amountInput) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(10000)) {
-    return { success: false, message: '現在混み合っています。少し待って再送してください。' };
-  }
+  if (!lock.tryLock(10000)) return { success: false, message: '混雑中。再試行してください。' };
 
   try {
-    const config = getConfigCached();
     const amount = Number(amountInput); 
-
-    if (!Number.isInteger(amount) || amount <= 0) throw new Error('コイン枚数は1以上の整数で指定してください。');
-    if (comment.length > config.MESSAGE_MAX_LENGTH) throw new Error(`メッセージは${config.MESSAGE_MAX_LENGTH}文字以内で入力してください。`);
+    if (amount > 10) throw new Error('1回10枚までです。');
 
     const ss = getSpreadsheet();
     const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
     const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
     const senderEmail = Session.getActiveUser().getEmail();
 
-    // ユーザーデータ取得
-    const usersData = userSheet.getDataRange().getValues();
-    const header = usersData.shift();
-    const emailToRow = {};
-    const usersObj = {};
-
-    usersData.forEach((row, i) => {
-      const email = row[0]; 
-      emailToRow[email] = i + 2; 
-      const u = {};
-      header.forEach((h, idx) => u[h] = row[idx]);
-      usersObj[email] = u;
-    });
-
-    const sender = usersObj[senderEmail];
-    const receiver = usersObj[receiverEmail];
-
-    if (!sender || !receiver) throw new Error('ユーザーデータが見つかりません。');
-    if (senderEmail === receiverEmail) throw new Error('自分には送れません。');
-
-    // 計算
-    const costSender = amount; 
-    if (Number(sender.wallet_balance) < costSender) throw new Error(`コイン不足です (保有: ${sender.wallet_balance})`);
-
-    const isSameDept = sender.department === receiver.department;
-    const multiplier = isSameDept ? 1 : Number(config.MULTIPLIER_DIFF_DEPT || 10);
-    const valueGained = amount * multiplier; 
-
-    const now = new Date();
+    const data = userSheet.getDataRange().getValues();
+    const header = data.shift();
+    const colIdx = {};
+    header.forEach((h, i) => colIdx[h] = i);
     
-    // トランザクション記録
-    transSheet.appendRow([
-      Utilities.getUuid(),
-      now,
-      senderEmail,
-      receiverEmail,
-      sender.department,
-      receiver.department,
-      amount,
-      multiplier,
-      costSender,
-      valueGained,
-      comment
-    ]);
+    let senderRow = -1, receiverRow = -1;
+    let senderData, receiverData;
 
-    // ユーザー更新
-    const sRow = emailToRow[senderEmail];
-    const rRow = emailToRow[receiverEmail];
-    
-    const newBal = Number(sender.wallet_balance) - costSender;
-    const newLifetime = Number(receiver.lifetime_received) + valueGained;
-    
-    userSheet.getRange(sRow, 5).setValue(newBal);      // E列: wallet
-    userSheet.getRange(sRow, 8).setValue(now);         // H列: last_updated
-    userSheet.getRange(rRow, 6).setValue(newLifetime); // F列: lifetime
-
-    // ランク判定（仕様書v3対応: RPG風ランク）
-    let newRank = receiver.rank;
-    if (newLifetime >= 10000) newRank = '天下人';
-    else if (newLifetime >= 5000) newRank = '豪商';
-    else if (newLifetime >= 1000) newRank = '商人';
-    else if (newLifetime >= 100) newRank = '丁稚';
-    else newRank = '素浪人';
-    
-    if (newRank !== receiver.rank) {
-       userSheet.getRange(rRow, 4).setValue(newRank); // D列
+    for (let i = 0; i < data.length; i++) {
+      if (data[i][colIdx.user_id] === senderEmail) { senderRow = i; senderData = data[i]; }
+      if (data[i][colIdx.user_id] === receiverEmail) { receiverRow = i; receiverData = data[i]; }
     }
 
-    // キャッシュクリア
-    clearAllCaches();
+    if (senderRow === -1 || receiverRow === -1) throw new Error('ユーザーが見つかりません');
 
-    // 送信者と受信者の履歴キャッシュをクリア
+    const memoJsonStr = senderData[colIdx.memo] || "{}";
+    let memoObj = {};
+    try { memoObj = JSON.parse(memoJsonStr); } catch(e) {}
+
+    const todayStr = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    if (memoObj.last_sent_date !== todayStr) {
+      memoObj.last_sent_date = todayStr;
+      memoObj.daily_total = 0;
+    }
+    if (!memoObj.monthly_log) memoObj.monthly_log = {};
+
+    if ((memoObj.daily_total + amount) > 20) throw new Error(`1日上限(20枚)を超えます。`);
+    const currentTargetCount = memoObj.monthly_log[receiverEmail] || 0;
+    if ((currentTargetCount + amount) > 30) throw new Error(`この人への月間上限(30枚)を超えます。`);
+    
+    const currentBalance = Number(senderData[colIdx.wallet_balance]);
+    if (currentBalance < amount) throw new Error('コイン不足');
+
+    const isSameDept = senderData[colIdx.department] === receiverData[colIdx.department];
+    const multiplier = isSameDept ? 1 : Number(APP_CONFIG.MULTIPLIER_DIFF_DEPT);
+    const valueGained = Math.floor(amount * multiplier);
+
+    const newBal = currentBalance - amount;
+    const newLife = Number(receiverData[colIdx.lifetime_received]) + valueGained;
+    
+    memoObj.daily_total += amount;
+    memoObj.monthly_log[receiverEmail] = currentTargetCount + amount;
+
+    let newRank = receiverData[colIdx.rank];
+    if (newLife >= 10000) newRank = '天下人';
+    else if (newLife >= 5000) newRank = '豪商';
+    else if (newLife >= 1000) newRank = '商人';
+    else if (newLife >= 100) newRank = '丁稚';
+
+    const now = new Date();
+    userSheet.getRange(senderRow + 2, colIdx.wallet_balance + 1).setValue(newBal);
+    userSheet.getRange(senderRow + 2, colIdx.memo + 1).setValue(JSON.stringify(memoObj));
+    userSheet.getRange(senderRow + 2, colIdx.last_updated + 1).setValue(now);
+
+    userSheet.getRange(receiverRow + 2, colIdx.lifetime_received + 1).setValue(newLife);
+    if (newRank !== receiverData[colIdx.rank]) {
+      userSheet.getRange(receiverRow + 2, colIdx.rank + 1).setValue(newRank);
+    }
+
+    transSheet.appendRow([
+      Utilities.getUuid(), now, senderEmail, receiverEmail,
+      senderData[colIdx.department], receiverData[colIdx.department],
+      amount, multiplier, amount, valueGained, comment
+    ]);
+
     const cache = CacheService.getScriptCache();
     cache.remove('HISTORY_' + senderEmail);
     cache.remove('HISTORY_' + receiverEmail);
 
     return {
-      success: true,
-      message: isSameDept ? `${amount}枚送りました！` : `他部署ボーナス！相手に${valueGained}枚分の価値として届きました！`,
-      newBalance: newBal,
-      newLifetime: newLifetime,
-      gainedValue: valueGained
+      success: true, message: '送信完了！',
+      newBalance: newBal, dailySent: memoObj.daily_total
     };
 
   } catch (e) {
@@ -214,398 +273,9 @@ function sendAirCoin(receiverEmail, comment, amountInput) {
   }
 }
 
-// --- High Performance Logic : ランキング取得 (高速化版) ---
+// --- ヘルパー & その他 ---
 
-function getRankings() {
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get('RANKINGS_v2_');
-  if (cached) return { success: true, rankings: JSON.parse(cached) };
-
-  const users = fetchAndCacheUsersData();
-  const ss = getSpreadsheet();
-  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
-  
-  // 1. MVP (受信) ランキング
-  // ★高速化: Transactionsを集計せず、Usersシートの lifetime_received を使う
-  const mvpRanking = Object.values(users)
-    .sort((a, b) => Number(b.lifetime_received) - Number(a.lifetime_received))
-    .slice(0, 10)
-    .map(u => ({
-      email: u.user_id,
-      name: u.name,
-      score: Number(u.lifetime_received),
-      dept: u.department
-    }));
-
-  // 2. 送信ランキング & 部署ランキング
-  // ★高速化: Transactionsを「今月分」だけ「後ろから」走査する
-  const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  
-  const sentMap = {};
-  const deptScoreMap = {};
-
-  // データ取得 (getLastRowを使って効率的に)
-  const lastRow = transSheet.getLastRow();
-  const startRow = Math.max(2, lastRow - 2000); // 最大でも直近2000件見れば十分と判断
-  
-  if (lastRow >= 2) {
-    const data = transSheet.getRange(startRow, 1, lastRow - startRow + 1, 10).getValues();
-    
-    // 後ろからループ (最新→過去)
-    for (let i = data.length - 1; i >= 0; i--) {
-      const row = data[i];
-      const date = new Date(row[1]); // B列: timestamp
-      
-      if (date < firstDay) break; // 先月以前のデータが出たら終了（高速化の肝）
-      
-      const sender = row[2];        // C列: sender
-      const receiverDept = row[5];  // F列: receiver_dept
-      const val = Number(row[9]);   // J列: value_gained
-
-      // 送信回数集計
-      sentMap[sender] = (sentMap[sender] || 0) + 1;
-      
-      // 部署スコア集計
-      if (receiverDept) {
-        deptScoreMap[receiverDept] = (deptScoreMap[receiverDept] || 0) + val;
-      }
-    }
-  }
-
-  const giverRanking = Object.keys(sentMap)
-    .map(email => ({
-      email: email,
-      name: users[email] ? users[email].name : '不明',
-      count: sentMap[email]
-    }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, 10);
-
-  const deptRanking = Object.keys(deptScoreMap)
-    .map(dept => ({
-      name: dept,
-      score: deptScoreMap[dept]
-    }))
-    .sort((a, b) => b.score - a.score);
-
-  const rankings = { mvp: mvpRanking, giver: giverRanking, dept: deptRanking };
-  cache.put('RANKINGS', JSON.stringify(rankings), CACHE_DURATION.RANKINGS);
-
-  return { success: true, rankings: rankings };
-}
-
-// --- High Performance Logic : 履歴取得 (超高速版) ---
-
-function getUserHistory(limit = 20) {
-  const email = Session.getActiveUser().getEmail();
-  const cache = CacheService.getScriptCache();
-
-  // キャッシュチェック（5分間）
-  const cacheKey = 'HISTORY_v2_' + email;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return { success: true, history: JSON.parse(cached) };
-  }
-
-  const ss = getSpreadsheet();
-  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
-  const lastRow = transSheet.getLastRow();
-
-  // 履歴がない場合
-  if (lastRow < 2) return { success: true, history: [] };
-
-  // ★超高速化: チャンクサイズを小さくし、必要な列のみ取得
-  const CHUNK_SIZE = 100; // 500 → 100に削減
-  const myHistory = [];
-  const senderIds = new Set(); // 送信者IDを収集
-
-  let currentRow = lastRow;
-
-  while (currentRow >= 2 && myHistory.length < limit) {
-    const startRow = Math.max(2, currentRow - CHUNK_SIZE + 1);
-    const numRows = currentRow - startRow + 1;
-
-    // ★必要な列のみ取得（B, C, D, E, G, J, K列 = 7列）
-    // B=timestamp, C=sender, D=receiver, E=sender_dept, G=amount, J=value, K=message
-    const data = transSheet.getRange(startRow, 2, numRows, 10).getValues();
-
-    // 取得したデータを後ろから走査
-    for (let i = data.length - 1; i >= 0; i--) {
-      const row = data[i];
-      // D列(receiver) = index 2 (範囲がB列から始まるため)
-      if (row[2] === email) {
-        const senderId = row[1]; // C列(sender) = index 1
-        senderIds.add(senderId);
-
-        myHistory.push({
-          timestamp: row[0],    // B列
-          sender_id: senderId,  // C列
-          sender_dept: row[3],  // E列
-          amount: row[5],       // G列
-          value: row[8],        // J列
-          message: row[9]       // K列
-        });
-
-        if (myHistory.length >= limit) break;
-      }
-    }
-
-    currentRow -= CHUNK_SIZE;
-    // 安全策: 過去2000件まで（5000 → 2000に削減）
-    if (lastRow - currentRow > 2000) break;
-  }
-
-  // ★ユーザー名解決の最適化: 必要な送信者のみ取得
-  if (myHistory.length > 0) {
-    const users = fetchAndCacheUsersData();
-    myHistory.forEach(h => {
-      h.sender_name = users[h.sender_id] ? users[h.sender_id].name : '退職済ユーザー';
-    });
-  }
-
-  // キャッシュに保存（5分間）
-  cache.put(cacheKey, JSON.stringify(myHistory), 300);
-
-  return { success: true, history: myHistory };
-}
-
-// --- サジェスト: 最近送った人 ---
-function getRecentRecipients(limit = 5) {
-  const email = Session.getActiveUser().getEmail();
-  const ss = getSpreadsheet();
-  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
-  const lastRow = transSheet.getLastRow();
-
-  if (lastRow < 2) return { success: true, recipients: [] };
-
-  const recentRecipients = [];
-  const seenEmails = new Set();
-
-  // 後ろから走査して、最近送った人を重複なしで取得
-  let currentRow = lastRow;
-  const CHUNK_SIZE = 200;
-
-  while (currentRow >= 2 && recentRecipients.length < limit) {
-    const startRow = Math.max(2, currentRow - CHUNK_SIZE + 1);
-    const numRows = currentRow - startRow + 1;
-
-    const data = transSheet.getRange(startRow, 1, numRows, 4).getValues(); // A~D列
-
-    for (let i = data.length - 1; i >= 0; i--) {
-      const row = data[i];
-      const sender = row[2]; // C列: sender
-      const receiver = row[3]; // D列: receiver
-
-      if (sender === email && !seenEmails.has(receiver)) {
-        seenEmails.add(receiver);
-        recentRecipients.push(receiver);
-
-        if (recentRecipients.length >= limit) break;
-      }
-    }
-
-    currentRow -= CHUNK_SIZE;
-    if (lastRow - currentRow > 2000) break; // 過去2000件まで
-  }
-
-  return { success: true, recipients: recentRecipients };
-}
-
-// --- 景気分析 (高速化版) ---
-function analyzeEconomyState() {
-  const ss = getSpreadsheet();
-  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
-  if (!transSheet) return 'normal';
-  
-  // ここも「直近のデータ」だけ見れば良いので、getLastRowを活用
-  const lastRow = transSheet.getLastRow();
-  if (lastRow < 2) return 'normal';
-  
-  const now = new Date();
-  const firstDay = new Date(now.getFullYear(), now.getMonth(), 1);
-  
-  // 最大1000件取得すれば、月初からのデータとしては十分と仮定
-  // (厳密にやるならループが必要だが、景気判定なので概算でOK)
-  const startRow = Math.max(2, lastRow - 1000);
-  const data = transSheet.getRange(startRow, 2, lastRow - startRow + 1, 9).getValues(); // B列(date)〜J列(value)
-  
-  let totalValueGained = 0;
-  for (let i = 0; i < data.length; i++) {
-    // B列はindex 0 (getRangeで2列目から取ったので)
-    const rowDate = new Date(data[i][0]);
-    if (rowDate >= firstDay) {
-      // J列はindex 8
-      totalValueGained += Number(data[i][8] || 0);
-    }
-  }
-
-  const config = getConfigCached();
-  const thresholdL3 = Number(config.ECONOMY_THRESHOLD_L3 || 50000);
-  const thresholdL2 = Number(config.ECONOMY_THRESHOLD_L2 || 10000);
-
-  if (totalValueGained >= thresholdL3) return 'boom'; 
-  if (totalValueGained >= thresholdL2) return 'normal'; 
-  return 'depression'; 
-}
-
-
-// --- 定期実行: 月次リセット ---
-function resetMonthlyData() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return;
-
-  try {
-    const ss = getSpreadsheet();
-    const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
-    const config = getConfigCached();
-    const defaultCoin = config.INITIAL_COIN || 1000;
-
-    const data = userSheet.getDataRange().getValues();
-    const header = data.shift();
-
-    // MVP（今月最高獲得者）を記録
-    if (data.length > 0) {
-      let mvpEmail = '';
-      let maxLifetime = 0;
-      data.forEach(row => {
-        const lifetime = Number(row[5]); // F列: lifetime_received
-        if (lifetime > maxLifetime) {
-          maxLifetime = lifetime;
-          mvpEmail = row[0]; // A列: user_id
-        }
-      });
-
-      if (mvpEmail) {
-        saveMVPHistory(mvpEmail, maxLifetime);
-      }
-    }
-
-    const walletColValues = [];
-    const lifetimeColValues = [];
-    const rankColValues = [];
-
-    data.forEach(() => {
-      rankColValues.push(['素浪人']);
-      walletColValues.push([defaultCoin]);
-      lifetimeColValues.push([0]);
-    });
-
-    if (data.length > 0) {
-      userSheet.getRange(2, 4, data.length, 1).setValues(rankColValues);
-      userSheet.getRange(2, 5, data.length, 1).setValues(walletColValues);
-      userSheet.getRange(2, 6, data.length, 1).setValues(lifetimeColValues);
-    }
-
-    let archiveSheet = ss.getSheetByName(SHEET_NAMES.ARCHIVE);
-    if (!archiveSheet) {
-      archiveSheet = ss.insertSheet(SHEET_NAMES.ARCHIVE);
-      archiveSheet.appendRow(['Date', 'Action', 'Count']);
-    }
-    archiveSheet.appendRow([new Date(), 'Monthly Reset Completed', data.length + ' users reset']);
-
-    clearAllCaches();
-
-  } catch (e) {
-    console.error('月次リセットエラー:', e);
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// --- MVP履歴管理 ---
-function saveMVPHistory(email, score) {
-  const ss = getSpreadsheet();
-  let mvpSheet = ss.getSheetByName(SHEET_NAMES.MVP_HISTORY);
-  if (!mvpSheet) {
-    mvpSheet = ss.insertSheet(SHEET_NAMES.MVP_HISTORY);
-    mvpSheet.appendRow(['YearMonth', 'Email', 'Score', 'Timestamp']);
-  }
-
-  const now = new Date();
-  const yearMonth = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM');
-  mvpSheet.appendRow([yearMonth, email, score, now]);
-}
-
-function getLastMonthMVP() {
-  const ss = getSpreadsheet();
-  const mvpSheet = ss.getSheetByName(SHEET_NAMES.MVP_HISTORY);
-  if (!mvpSheet) return null;
-
-  const lastRow = mvpSheet.getLastRow();
-  if (lastRow < 2) return null;
-
-  // 最新のMVPを取得（最後の行）
-  const mvpEmail = mvpSheet.getRange(lastRow, 2).getValue();
-  return mvpEmail || null;
-}
-
-// --- 定期実行: リマインド ---
-function sendReminderEmails() {
-  const usersMap = fetchAndCacheUsersData();
-  const users = Object.values(usersMap);
-  
-  users.forEach(user => {
-    const balance = Number(user.wallet_balance);
-    if (balance >= 300) {
-      try {
-        GmailApp.sendEmail(
-          user.user_id,
-          "【E-yan Coin】コインの有効期限が迫っています",
-          `${user.name}さん\n\n今月のコイン残高: ${balance}枚\n月末にリセットされます。感謝を伝えましょう！`
-        );
-        Utilities.sleep(100);
-      } catch (e) { console.error(e); }
-    }
-  });
-}
-
-// --- Helpers ---
-
-function registerNewUser(formObject) {
-  const lock = LockService.getScriptLock();
-  try {
-    if (lock.tryLock(10000)) {
-      const ss = getSpreadsheet();
-      const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
-      const email = Session.getActiveUser().getEmail();
-      const usersMap = fetchAndCacheUsersData();
-      
-      if (usersMap[email]) return { success: false, message: '既に登録済みです。' };
-
-      const config = getConfigCached();
-      userSheet.appendRow([
-        email, formObject.name, formObject.department, '素浪人',
-        config.INITIAL_COIN || 1000, 0, '', new Date()
-      ]);
-      clearAllCaches();
-      return { success: true, message: '登録完了！' };
-    } else {
-      return { success: false, message: '混雑しています。' };
-    }
-  } catch (e) {
-    return { success: false, message: '登録エラー: ' + e.message };
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-function getSpreadsheet() { return SpreadsheetApp.openById(SS_ID); }
-
-function fetchAndCacheUsersData() {
-  const ss = getSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAMES.USERS);
-  const data = sheet.getDataRange().getValues();
-  const header = data.shift();
-  const map = {};
-  data.forEach(row => {
-    const u = {};
-    header.forEach((h, i) => u[h] = row[i]);
-    if(u.user_id) map[u.user_id] = u;
-  });
-  CacheService.getScriptCache().put('ALL_USERS_DATA', JSON.stringify(map), CACHE_DURATION.USER_LIST);
-  return map;
-}
+function getSpreadsheet() { return SpreadsheetApp.openById(APP_CONFIG.SS_ID); }
 
 function getDepartmentsCached() {
   const cache = CacheService.getScriptCache();
@@ -614,30 +284,243 @@ function getDepartmentsCached() {
   const ss = getSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAMES.DEPARTMENTS);
   if (!sheet) return [];
-  const vals = sheet.getRange(2, 1, sheet.getLastRow()-1 || 1, 1).getValues();
-  const list = vals.flat().filter(String);
-  cache.put('DEPT_LIST', JSON.stringify(list), CACHE_DURATION.DEPARTMENTS);
+  const list = sheet.getRange(2, 1, sheet.getLastRow()-1 || 1, 1).getValues().flat().filter(String);
+  cache.put('DEPT_LIST', JSON.stringify(list), 3600);
   return list;
 }
 
-function getConfigCached() {
+function registerNewUser(form) {
   const ss = getSpreadsheet();
-  const sheet = ss.getSheetByName(SHEET_NAMES.CONFIG);
-  let conf = {...DEFAULT_CONFIG};
-  if(sheet) {
-    const data = sheet.getDataRange().getValues();
-    data.shift(); 
-    data.forEach(r => { if(r[0]) conf[r[0]] = r[1]; });
-  }
-  return conf;
+  const sheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  const email = Session.getActiveUser().getEmail();
+  sheet.appendRow([email, form.name, form.department, '素浪人', APP_CONFIG.INITIAL_COIN, 0, '{}', new Date()]);
+  admin_updateUserJson();
+  return { success: true, message: '登録完了' };
 }
 
-function clearAllCaches() {
+function getRankings() {
   const cache = CacheService.getScriptCache();
-  cache.remove('ALL_USERS_DATA');
-  cache.remove('ECONOMY_STATE');
-  cache.remove('DEPT_LIST');
-  cache.remove('RANKINGS');
-  // 履歴キャッシュは個別にクリアする必要がある（ユーザーごとに異なるため）
-  // 送金時に送信者と受信者の履歴キャッシュをクリア
+  const cached = cache.get('RANKINGS_v4');
+  if (cached) return { success: true, rankings: JSON.parse(cached) };
+
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  const userData = userSheet.getDataRange().getValues();
+  userData.shift();
+  const mvp = userData.map(r => ({name: r[1], dept: r[2], score: Number(r[5])}))
+    .sort((a,b) => b.score - a.score)
+    .slice(0, 10);
+    
+  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
+  const lastRow = transSheet.getLastRow();
+  const deptMap = {};
+  if(lastRow >= 2) {
+    const start = Math.max(2, lastRow - 1000);
+    const tData = transSheet.getRange(start, 6, lastRow - start + 1, 5).getValues(); 
+    tData.forEach(r => {
+      const d = r[0]; 
+      const v = Number(r[4]||0); 
+      if(d) deptMap[d] = (deptMap[d]||0) + v;
+    });
+  }
+  const dept = Object.keys(deptMap).map(k => ({name: k, score: deptMap[k]}))
+    .sort((a,b) => b.score - a.score).slice(0, 5);
+    
+  const rankings = { mvp: mvp, dept: dept, giver: [] };
+  cache.put('RANKINGS_v4', JSON.stringify(rankings), 900);
+  return { success: true, rankings: rankings };
+}
+
+function getUserHistory() {
+  const email = Session.getActiveUser().getEmail();
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get('HISTORY_' + email);
+  if(cached) return { success: true, history: JSON.parse(cached) };
+  
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
+  const lastRow = sheet.getLastRow();
+  if(lastRow<2) return {success:true, history:[]};
+  
+  const history = [];
+  const CHUNK = 200;
+  let curr = lastRow;
+  
+  while(curr >= 2 && history.length < 20) {
+    const start = Math.max(2, curr - CHUNK + 1);
+    const data = sheet.getRange(start, 2, curr - start + 1, 10).getValues();
+    for(let i=data.length-1; i>=0; i--) {
+      if(data[i][2] === email) {
+        history.push({
+          timestamp: data[i][0],
+          sender_id: data[i][1],
+          sender_dept: data[i][3],
+          amount: data[i][5],
+          value: data[i][8],
+          message: data[i][9]
+        });
+        if(history.length >= 20) break;
+      }
+    }
+    curr -= CHUNK;
+    if(lastRow - curr > 2000) break;
+  }
+  
+  cache.put('HISTORY_' + email, JSON.stringify(history), 300);
+  return { success: true, history: history };
+}
+
+// --- 省略されていた関数群の実装 ---
+
+// 景気分析 (Config定数を使用)
+function analyzeEconomyState() {
+  const ss = getSpreadsheet();
+  const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
+  if (!transSheet) return 'level2';
+  
+  const lastRow = transSheet.getLastRow();
+  if (lastRow < 2) return 'level2'; // データが少なければ通常
+  
+  // 直近1000件の value_gained (J列) を集計
+  // J列は10列目
+  const startRow = Math.max(2, lastRow - 1000);
+  const data = transSheet.getRange(startRow, 10, lastRow - startRow + 1, 1).getValues();
+  
+  let totalValue = 0;
+  for (let i = 0; i < data.length; i++) {
+    totalValue += Number(data[i][0] || 0);
+  }
+
+  const l2 = APP_CONFIG.ECONOMY_THRESHOLD_L2; // 10000
+  const l3 = APP_CONFIG.ECONOMY_THRESHOLD_L3; // 50000
+
+  if (totalValue >= l3) return 'level3'; // 好景気 (Pink)
+  if (totalValue >= l2) return 'level2'; // 通常 (Purple)
+  return 'level1';                       // 不況 (Blue)
+}
+
+// 月次リセット (Config定数を使用)
+function resetMonthlyData() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(600000)) return;
+
+  try {
+    const ss = getSpreadsheet();
+    const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+    const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
+    
+    // Config定数からアーカイブID取得
+    const archiveId = APP_CONFIG.ARCHIVE_SS_ID;
+    const initialCoin = APP_CONFIG.INITIAL_COIN;
+
+    // 1. MVP保存
+    const userData = userSheet.getDataRange().getValues();
+    const header = userData.shift();
+    const colIdx = {};
+    header.forEach((h, i) => colIdx[h] = i);
+
+    let mvpEmail = '';
+    let maxLifetime = -1;
+    userData.forEach(row => {
+      const lifetime = Number(row[colIdx.lifetime_received] || 0);
+      if (lifetime > maxLifetime) {
+        maxLifetime = lifetime;
+        mvpEmail = row[colIdx.user_id];
+      }
+    });
+    if (mvpEmail && maxLifetime > 0) saveMVPHistory(mvpEmail, maxLifetime);
+
+    // 2. アーカイブ
+    if (transSheet.getLastRow() > 1 && archiveId) {
+      try {
+        const archiveSS = SpreadsheetApp.openById(archiveId);
+        const now = new Date();
+        const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        const sheetName = Utilities.formatDate(lastMonth, 'Asia/Tokyo', 'yyyy_MM');
+        
+        let targetSheet = archiveSS.getSheetByName(sheetName);
+        if (!targetSheet) {
+          targetSheet = archiveSS.insertSheet(sheetName);
+          const headers = transSheet.getRange(1, 1, 1, transSheet.getLastColumn()).getValues();
+          targetSheet.getRange(1, 1, 1, headers[0].length).setValues(headers);
+        }
+        
+        const transData = transSheet.getRange(2, 1, transSheet.getLastRow() - 1, transSheet.getLastColumn()).getValues();
+        if (transData.length > 0) {
+          targetSheet.getRange(targetSheet.getLastRow() + 1, 1, transData.length, transData[0].length).setValues(transData);
+        }
+        
+        transSheet.deleteRows(2, transSheet.getLastRow() - 1);
+        
+        let logSheet = ss.getSheetByName(SHEET_NAMES.ARCHIVE_LOG);
+        if(!logSheet) logSheet = ss.insertSheet(SHEET_NAMES.ARCHIVE_LOG);
+        logSheet.appendRow([new Date(), `Archived to ${sheetName}`, `${transData.length} rows`]);
+      } catch (e) { console.error('Archive failed', e); }
+    }
+
+    // 3. ユーザーリセット
+    const numRows = userData.length;
+    if (numRows > 0) {
+      userSheet.getRange(2, colIdx.rank + 1, numRows, 1).setValue('素浪人');
+      userSheet.getRange(2, colIdx.wallet_balance + 1, numRows, 1).setValue(initialCoin);
+      userSheet.getRange(2, colIdx.lifetime_received + 1, numRows, 1).setValue(0);
+      userSheet.getRange(2, colIdx.memo + 1, numRows, 1).setValue('{}');
+    }
+    
+    // キャッシュ全削除
+    const cache = CacheService.getScriptCache();
+    cache.remove('ALL_USERS_DATA_v4');
+    cache.remove('ECONOMY_STATE_v4');
+    cache.remove('RANKINGS_v4');
+
+  } catch (e) { console.error(e); } finally { lock.releaseLock(); }
+}
+
+// リマインド (Config定数を使用)
+function sendReminderEmails() {
+  // Configから閾値取得
+  const threshold = APP_CONFIG.REMINDER_THRESHOLD;
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  const data = userSheet.getDataRange().getValues();
+  const header = data.shift();
+  const colIdx = {};
+  header.forEach((h, i) => colIdx[h] = i);
+  
+  data.forEach(row => {
+    const bal = Number(row[colIdx.wallet_balance]);
+    const email = row[colIdx.user_id];
+    const name = row[colIdx.name];
+    if (bal >= threshold) {
+      try {
+        GmailApp.sendEmail(
+          email,
+          "【E-yan Coin】コインを使い切りましょう！",
+          `${name}さん\n\n今月の残高: ${bal}枚\n月末リセットされます。\n\n${ScriptApp.getService().getUrl()}`
+        );
+        Utilities.sleep(100);
+      } catch(e){}
+    }
+  });
+}
+
+function saveMVPHistory(email, score) {
+  const ss = getSpreadsheet();
+  let sheet = ss.getSheetByName(SHEET_NAMES.MVP_HISTORY);
+  if (!sheet) { sheet = ss.insertSheet(SHEET_NAMES.MVP_HISTORY); sheet.appendRow(['YM','Email','Score','Time']); }
+  const ym = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM');
+  sheet.appendRow([ym, email, score, new Date()]);
+}
+
+function getLastMonthMVP() {
+  const ss = getSpreadsheet();
+  const sheet = ss.getSheetByName(SHEET_NAMES.MVP_HISTORY);
+  if (!sheet || sheet.getLastRow() < 2) return null;
+  return sheet.getRange(sheet.getLastRow(), 2).getValue();
+}
+
+function deleteRetiredUsers() {
+  const m = new Date().getMonth() + 1;
+  if (![1, 4, 7, 10].includes(m)) return;
+  console.log('Quarterly cleanup check (Manual)');
 }
