@@ -1,19 +1,15 @@
 /**
- * E-yan Coin App - 大阪支社 (v4.1 Full Implementation)
- * * 【高速化対応】
- * 1. Lazy Loading: ユーザーリストは別便で取得
- * 2. Array-ification: データ通信量を配列化で削減
- * 3. Config: シート読み込みを廃止し定数化
- * 4. JSON Storage: ユーザーリストをJSONファイルとしてDriveにキャッシュ
+ * E-yan Coin App - 大阪支社 (v4.2 Full Implementation)
+ * Update: Added Email Notifications & Recap Logic
  */
 
-// --- ★設定エリア (Configシートの代わり) ---
+// --- ★設定エリア (Config) ---
 const APP_CONFIG = {
   INITIAL_COIN: 100,           // 月初の所持コイン
   MULTIPLIER_DIFF_DEPT: 1.5,   // 他部署倍率
   MESSAGE_MAX_LENGTH: 100,     // メッセージ文字数上限
-  ECONOMY_THRESHOLD_L2: 10000, // 景気Lv2閾値 MAX流通量=24750=165*100*1.5
-  ECONOMY_THRESHOLD_L3: 17375, // 景気Lv3閾値 (MAX流通量-10000)/2
+  ECONOMY_THRESHOLD_L2: 10000, // 景気Lv2閾値
+  ECONOMY_THRESHOLD_L3: 17375, // 景気Lv3閾値
   REMINDER_THRESHOLD: 50,      // リマインド閾値
   
   // ID設定
@@ -234,13 +230,7 @@ function sendAirCoin(receiverEmail, comment, amountInput) {
     
     memoObj.daily_total += amount;
     memoObj.monthly_log[receiverEmail] = currentTargetCount + amount;
-/*
-    let newRank = receiverData[colIdx.rank];
-    if (newLife >= 10000) newRank = '天下人';
-    else if (newLife >= 5000) newRank = '豪商';
-    else if (newLife >= 1000) newRank = '商人';
-    else if (newLife >= 100) newRank = '丁稚';
-*/
+
     let newRank = receiverData[colIdx.rank];
     if (newLife >= 150) newRank = '天下人';
     else if (newLife >= 100) newRank = '豪商';
@@ -376,8 +366,6 @@ function getUserHistory() {
   return { success: true, history: history };
 }
 
-// --- 省略されていた関数群の実装 ---
-
 // 景気分析 (Config定数を使用)
 function analyzeEconomyState() {
   const ss = getSpreadsheet();
@@ -385,10 +373,8 @@ function analyzeEconomyState() {
   if (!transSheet) return 'level2';
   
   const lastRow = transSheet.getLastRow();
-  if (lastRow < 2) return 'level2'; // データが少なければ通常
+  if (lastRow < 2) return 'level2'; 
   
-  // 直近1000件の value_gained (J列) を集計
-  // J列は10列目
   const startRow = Math.max(2, lastRow - 1000);
   const data = transSheet.getRange(startRow, 10, lastRow - startRow + 1, 1).getValues();
   
@@ -397,15 +383,138 @@ function analyzeEconomyState() {
     totalValue += Number(data[i][0] || 0);
   }
 
-  const l2 = APP_CONFIG.ECONOMY_THRESHOLD_L2; // 10000
-  const l3 = APP_CONFIG.ECONOMY_THRESHOLD_L3; // 50000
+  const l2 = APP_CONFIG.ECONOMY_THRESHOLD_L2; 
+  const l3 = APP_CONFIG.ECONOMY_THRESHOLD_L3; 
 
-  if (totalValue >= l3) return 'level3'; // 好景気 (Pink)
-  if (totalValue >= l2) return 'level2'; // 通常 (Purple)
-  return 'level1';                       // 不況 (Blue)
+  if (totalValue >= l3) return 'level3'; 
+  if (totalValue >= l2) return 'level2'; 
+  return 'level1'; 
 }
 
-// 月次リセット (Config定数を使用)
+// --- Batch Functions (Notifications & Reset) ---
+
+// 1. 日次リキャップメール (トリガー: 毎日 7:00-8:00)
+function sendDailyRecap() {
+  const now = new Date();
+  const isFirstDayOfMonth = (now.getDate() === 1);
+  
+  // 対象日 = 前日
+  const targetDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  const targetDateStr = Utilities.formatDate(targetDate, 'Asia/Tokyo', 'yyyy-MM-dd');
+  
+  let transData = [];
+
+  if (isFirstDayOfMonth) {
+    // 月初(1日)の朝7時は、メインSSはリセット済なのでアーカイブSSを見る
+    try {
+      if (!APP_CONFIG.ARCHIVE_SS_ID) return;
+      const archiveSS = SpreadsheetApp.openById(APP_CONFIG.ARCHIVE_SS_ID);
+      // シート名は "yyyy_MM" (前月)
+      const archiveSheetName = Utilities.formatDate(targetDate, 'Asia/Tokyo', 'yyyy_MM');
+      const sheet = archiveSS.getSheetByName(archiveSheetName);
+      if (sheet && sheet.getLastRow() > 1) {
+        transData = sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).getValues();
+      }
+    } catch(e) {
+      console.error('Archive Access Error in Daily Recap', e);
+      return;
+    }
+  } else {
+    // 通常日はメインSSを見る
+    const ss = getSpreadsheet();
+    const sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
+    if (sheet && sheet.getLastRow() > 1) {
+      transData = sheet.getRange(2, 1, sheet.getLastRow() - 1, 11).getValues();
+    }
+  }
+
+  // 前日分のデータをフィルタリング
+  // Transactions Layout: [uuid, time, sender, receiver, s_dept, r_dept, amt, mult, cost, val, msg]
+  // Index: 0, 1(Time), 2(Sender), 3(Receiver), ..., 10(Msg)
+  
+  const recipientsMap = {}; // { receiverEmail: [ {sender, msg}, ... ] }
+
+  transData.forEach(row => {
+    const rowTime = new Date(row[1]);
+    const rowDateStr = Utilities.formatDate(rowTime, 'Asia/Tokyo', 'yyyy-MM-dd');
+    
+    if (rowDateStr === targetDateStr) {
+      const receiver = row[3];
+      const sender = row[2];
+      const msg = row[10];
+      
+      if (!recipientsMap[receiver]) recipientsMap[receiver] = [];
+      recipientsMap[receiver].push({ sender: sender, msg: msg });
+    }
+  });
+
+  // メール送信
+  const appUrl = ScriptApp.getService().getUrl();
+  
+  Object.keys(recipientsMap).forEach(email => {
+    const msgs = recipientsMap[email];
+    if (msgs.length === 0) return;
+
+    let body = `お疲れ様です。\n昨日、${msgs.length}件のE-yan Coinメッセージを受け取りました！\n\n`;
+    msgs.forEach(m => {
+      body += `■ ${m.sender}さんより\n「${m.msg}」\n\n`;
+    });
+    body += `獲得枚数や詳細はアプリで確認してください。\n${appUrl}\n\n今日も良い一日を！`;
+
+    try {
+      GmailApp.sendEmail(email, '【E-yan Coin】メッセージが届いています', body);
+      Utilities.sleep(500); // Rate Limit対策
+    } catch(e) {
+      console.error(`Failed to send email to ${email}`, e);
+    }
+  });
+}
+
+// 2. 利用促進メール (トリガー: 毎週月曜 10:00)
+function checkInactivity() {
+  const ss = getSpreadsheet();
+  const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
+  const data = userSheet.getDataRange().getValues();
+  const header = data.shift();
+  const colIdx = {};
+  header.forEach((h, i) => colIdx[h] = i);
+  
+  const today = new Date();
+  const appUrl = ScriptApp.getService().getUrl();
+
+  data.forEach(row => {
+    const email = row[colIdx.user_id];
+    const memoJson = row[colIdx.memo] || "{}";
+    let lastSentDateStr = null;
+
+    try {
+      const memo = JSON.parse(memoJson);
+      lastSentDateStr = memo.last_sent_date; // "yyyy-MM-dd"
+    } catch(e) {}
+
+    let daysDiff = 999;
+    if (lastSentDateStr) {
+      const lastSent = new Date(lastSentDateStr);
+      const diffTime = Math.abs(today - lastSent);
+      daysDiff = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
+
+    // 7日以上経過、かつ一度も送ったことがない(null)場合も含む
+    if (daysDiff >= 7) {
+      try {
+        GmailApp.sendEmail(
+          email,
+          '【E-yan Coin】最近どうですか？',
+          `最近コインを送っていないようです。\n\n「ありがとう」や「お疲れ様」、「ええやん！！」を伝えてみませんか？\nアプリを開く: ${appUrl}`
+        );
+        Utilities.sleep(500);
+      } catch(e) { console.error(e); }
+    }
+  });
+}
+
+
+// 3. 月次リセット (トリガー: 毎月1日 1:00)
 function resetMonthlyData() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(600000)) return;
@@ -415,7 +524,6 @@ function resetMonthlyData() {
     const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
     const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
     
-    // Config定数からアーカイブID取得
     const archiveId = APP_CONFIG.ARCHIVE_SS_ID;
     const initialCoin = APP_CONFIG.INITIAL_COIN;
 
@@ -465,9 +573,10 @@ function resetMonthlyData() {
     }
 
     // 3. ユーザーリセット
+    // ※ランクは全員「素浪人」に戻す仕様
     const numRows = userData.length;
     if (numRows > 0) {
-      userSheet.getRange(2, colIdx.rank + 1, numRows, 1).setValue('素浪人');
+      userSheet.getRange(2, colIdx.rank + 1, numRows, 1).setValue('素浪人'); 
       userSheet.getRange(2, colIdx.wallet_balance + 1, numRows, 1).setValue(initialCoin);
       userSheet.getRange(2, colIdx.lifetime_received + 1, numRows, 1).setValue(0);
       userSheet.getRange(2, colIdx.memo + 1, numRows, 1).setValue('{}');
@@ -482,9 +591,8 @@ function resetMonthlyData() {
   } catch (e) { console.error(e); } finally { lock.releaseLock(); }
 }
 
-// リマインド (Config定数を使用)
+// 4. 残高リマインド (トリガー: 月末 指定時刻)
 function sendReminderEmails() {
-  // Configから閾値取得
   const threshold = APP_CONFIG.REMINDER_THRESHOLD;
   const ss = getSpreadsheet();
   const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
@@ -523,10 +631,4 @@ function getLastMonthMVP() {
   const sheet = ss.getSheetByName(SHEET_NAMES.MVP_HISTORY);
   if (!sheet || sheet.getLastRow() < 2) return null;
   return sheet.getRange(sheet.getLastRow(), 2).getValue();
-}
-
-function deleteRetiredUsers() {
-  const m = new Date().getMonth() + 1;
-  if (![1, 4, 7, 10].includes(m)) return;
-  console.log('Quarterly cleanup check (Manual)');
 }
