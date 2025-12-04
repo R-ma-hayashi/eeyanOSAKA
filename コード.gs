@@ -12,8 +12,8 @@ const APP_CONFIG = {
   INITIAL_COIN: 100,           // 月初の所持コイン
   MULTIPLIER_DIFF_DEPT: 1.5,   // 他部署倍率
   MESSAGE_MAX_LENGTH: 100,     // メッセージ文字数上限
-  ECONOMY_THRESHOLD_L2: 10000, // 景気Lv2閾値
-  ECONOMY_THRESHOLD_L3: 50000, // 景気Lv3閾値
+  ECONOMY_THRESHOLD_L2: 10000, // 景気Lv2閾値 MAX流通量=24750=165*100*1.5
+  ECONOMY_THRESHOLD_L3: 17375, // 景気Lv3閾値 (MAX流通量-10000)/2
   REMINDER_THRESHOLD: 50,      // リマインド閾値
   
   // ID設定
@@ -21,7 +21,7 @@ const APP_CONFIG = {
   ARCHIVE_SS_ID: '1Gk3B_yd0q-sqskmQwHBsWk0PfYbSqfD0UdzYYiMhN5w', // アーカイブSS
   
   // ★手順で生成されたJSONファイルIDをここに貼る
-  JSON_FILE_ID: '' 
+  JSON_FILE_ID: '1K-9jVyC8SK9_g8AS87WxuI1Ax_IeiX7X' 
 };
 
 // シート名定義
@@ -234,12 +234,18 @@ function sendAirCoin(receiverEmail, comment, amountInput) {
     
     memoObj.daily_total += amount;
     memoObj.monthly_log[receiverEmail] = currentTargetCount + amount;
-
+/*
     let newRank = receiverData[colIdx.rank];
     if (newLife >= 10000) newRank = '天下人';
     else if (newLife >= 5000) newRank = '豪商';
     else if (newLife >= 1000) newRank = '商人';
     else if (newLife >= 100) newRank = '丁稚';
+*/
+    let newRank = receiverData[colIdx.rank];
+    if (newLife >= 150) newRank = '天下人';
+    else if (newLife >= 100) newRank = '豪商';
+    else if (newLife >= 50) newRank = '商人';
+    else if (newLife >= 15) newRank = '丁稚';
 
     const now = new Date();
     userSheet.getRange(senderRow + 2, colIdx.wallet_balance + 1).setValue(newBal);
