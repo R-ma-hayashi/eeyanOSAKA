@@ -1,6 +1,6 @@
 /**
- * E-yan Coin App - 大阪支社 (v4.6 Performance & UI Fix)
- * Update: Optimized History Loading & Unified Toast Notifications
+ * E-yan Coin App - 大阪支社 (v4.7 Performance Fix)
+ * Update: Reverted History Logic to v4.4 (Chunk) for Speed, Kept v4.6 Ranking Logic
  */
 
 // --- ★設定エリア (Config) ---
@@ -275,15 +275,23 @@ function getRankings() {
 
   const ss = getSpreadsheet();
   
-  // 1. MVP (Received)
+  // 1. MVP (Received) & Dept Headcount
   const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
   const userData = userSheet.getDataRange().getValues();
   userData.shift(); // remove header
   
-  // Create Email->Name/Dept Map
+  // Create Email->Name/Dept Map & Count Dept Population
   const userMap = {};
+  const deptHeadcount = {}; // 部署ごとの人数用
+
   userData.forEach(r => {
-    userMap[r[0]] = { name: r[1], dept: r[2] };
+    const dept = r[2];
+    userMap[r[0]] = { name: r[1], dept: dept };
+    
+    // 部署人数カウント
+    if(dept) {
+      deptHeadcount[dept] = (deptHeadcount[dept] || 0) + 1;
+    }
   });
 
   const mvp = userData.map(r => ({name: r[1], dept: r[2], score: Number(r[5])}))
@@ -294,35 +302,40 @@ function getRankings() {
   const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
   const lastRow = transSheet.getLastRow();
   
-  const deptMap = {};
-  const giverMap = {}; // { email: score }
+  const deptCountMap = {}; // { deptName: countOfSending }
+  const giverMap = {}; // { email: countOfSending }
 
   if(lastRow >= 2) {
     const start = 2;
-    // Transactions: Col C(3)=Sender, F(6)=ReceiverDept, G(7)=Amount, J(10)=ValueGained
+    // Transactions: Col C(3)=Sender, E(5)=SenderDept, F(6)=ReceiverDept, G(7)=Amount, J(10)=ValueGained
     // getRange(start, 3, rows, 8) => C, D, E, F, G, H, I, J
-    // Index: 0:Sender, 3:ReceiverDept, 4:Amount, 7:ValueGained
+    // Index: 0:Sender, 2:SenderDept(E), 3:ReceiverDept, 4:Amount, 7:ValueGained
     const tData = transSheet.getRange(start, 3, lastRow - start + 1, 8).getValues();
     
     tData.forEach(r => {
       const sender = r[0];
-      const recDept = r[3];
-      const amount = Number(r[4]||0);
-      const valGained = Number(r[7]||0);
+      const senderDept = r[2]; // E列: Sender Dept
+      // const amount = Number(r[4]||0); // コイン枚数は使わない
       
-      // Dept Ranking (Based on Received Value)
-      if(recDept) deptMap[recDept] = (deptMap[recDept]||0) + valGained;
+      // Dept Ranking (Based on Sending Activity / Headcount)
+      // E列の部署ごとの出現数をカウント
+      if(senderDept) deptCountMap[senderDept] = (deptCountMap[senderDept]||0) + 1;
       
-      // Giver Ranking (Based on Sent Amount)
-      if(sender) giverMap[sender] = (giverMap[sender]||0) + amount;
+      // Giver Ranking (Based on Sent Count)
+      // 送信回数をカウント（+1）
+      if(sender) giverMap[sender] = (giverMap[sender]||0) + 1;
     });
   }
 
-  // Format Dept Ranking
-  const dept = Object.keys(deptMap).map(k => ({name: k, score: deptMap[k]}))
-    .sort((a,b) => b.score - a.score).slice(0, 5);
+  // Format Dept Ranking (Per Capita)
+  const dept = Object.keys(deptCountMap).map(k => {
+    const count = deptCountMap[k];
+    const headcount = deptHeadcount[k] || 1; // 0除算防止
+    const perCapitaScore = parseFloat((count / headcount).toFixed(2)); // 小数点2位まで
+    return { name: k, score: perCapitaScore };
+  }).sort((a,b) => b.score - a.score).slice(0, 5);
   
-  // Format Giver Ranking
+  // Format Giver Ranking (Count Based)
   const giver = Object.keys(giverMap).map(k => {
     const u = userMap[k] || { name: k.split('@')[0], dept: '不明' };
     return { name: u.name, dept: u.dept, score: giverMap[k] };
@@ -364,24 +377,36 @@ function getArchiveRankingData(sheetName) {
 
     const userListRes = getUserListData();
     const userMap = {}; 
+    const deptHeadcount = {}; // アーカイブ用にも現在の人数を適用（過去の人数は不明なため近似値として利用）
+
     if (userListRes.success) {
-      userListRes.list.forEach(u => userMap[u[0]] = { name: u[1], dept: u[2] });
+      userListRes.list.forEach(u => {
+        userMap[u[0]] = { name: u[1], dept: u[2] };
+        if(u[2]) deptHeadcount[u[2]] = (deptHeadcount[u[2]] || 0) + 1;
+      });
     }
 
     const mvpMap = {};
-    const deptMap = {};
+    const deptCountMap = {}; // 部署回数カウント用
     const giverMap = {};
 
     data.forEach(row => {
+      // Archive: A=0, B=1, C=2(Sender), D=3(Receiver), E=4(SenderDept), F=5(RecDept)...
       const sender = row[2];
       const receiver = row[3];
-      const recDept = row[5];
-      const amount = Number(row[6] || 0);
+      const senderDept = row[4]; // E列
+      // const recDept = row[5]; // 不要
+      // const amount = Number(row[6] || 0);
       const valGained = Number(row[9] || 0);
 
+      // MVP (Received Value - Unchanged)
       if (receiver) mvpMap[receiver] = (mvpMap[receiver] || 0) + valGained;
-      if (recDept) deptMap[recDept] = (deptMap[recDept] || 0) + valGained;
-      if (sender) giverMap[sender] = (giverMap[sender] || 0) + amount;
+      
+      // Dept (Sender Count per Dept)
+      if (senderDept) deptCountMap[senderDept] = (deptCountMap[senderDept] || 0) + 1;
+      
+      // Giver (Count)
+      if (sender) giverMap[sender] = (giverMap[sender] || 0) + 1;
     });
 
     const mvp = Object.keys(mvpMap).map(k => {
@@ -389,8 +414,12 @@ function getArchiveRankingData(sheetName) {
       return { name: u.name, dept: u.dept, score: mvpMap[k] };
     }).sort((a, b) => b.score - a.score).slice(0, 10);
 
-    const dept = Object.keys(deptMap).map(k => ({ name: k, score: deptMap[k] }))
-      .sort((a, b) => b.score - a.score).slice(0, 5);
+    const dept = Object.keys(deptCountMap).map(k => {
+      const count = deptCountMap[k];
+      const headcount = deptHeadcount[k] || 1;
+      const perCapita = parseFloat((count / headcount).toFixed(2));
+      return { name: k, score: perCapita };
+    }).sort((a, b) => b.score - a.score).slice(0, 5);
 
     const giver = Object.keys(giverMap).map(k => {
       const u = userMap[k] || { name: k.split('@')[0], dept: '退職/不明' };
@@ -429,7 +458,7 @@ function registerNewUser(form) {
   return { success: true, message: '登録完了' };
 }
 
-// ★Optimized History Loading★
+// ★Optimized History Loading (Reverted to v4.4 Chunk Logic for Speed)★
 function getUserHistory() {
   const email = Session.getActiveUser().getEmail();
   const cache = CacheService.getScriptCache();
@@ -439,50 +468,48 @@ function getUserHistory() {
   const ss = getSpreadsheet();
   const sheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
   const lastRow = sheet.getLastRow();
-  if(lastRow<2) return {success:true, history:[]};
-  
-  // ★高速化: ループで細かく呼ぶのではなく、直近N件を一括で取得する
-  const SCAN_LIMIT = 3000; // 直近3000件のスキャンに限定（十分な量）
-  const startRow = Math.max(2, lastRow - SCAN_LIMIT + 1);
-  const numRows = lastRow - startRow + 1;
-  
-  // 列B(2)からJ(10)までを一括取得
-  // id(0), timestamp(1), sender(2), receiver(3), sender_dept(4), receiver_dept(5), 
-  // amount(6), multiplier(7), cost(8), value_gained(9), message(10)
-  // getRangeのOffset注意: B列=2列目。取得したいのは B(2)〜K(11) あたり
-  // ここでは Transactionsの全カラムを一気に取るのが安全。
-  // シートの構成: A=id, B=time, C=sender, D=receiver...
-  // getValues() の結果は [row][col]
-  const data = sheet.getRange(startRow, 1, numRows, 11).getValues(); // A列からK列まで取得
+  if(lastRow < 2) return {success:true, history:[]};
   
   const history = [];
+  const CHUNK = 200; // 一度に読み込む行数（少なめに設定して高速化）
+  let curr = lastRow;
   
-  // 後ろから走査
-  for(let i = data.length - 1; i >= 0; i--) {
-    const row = data[i];
-    // row[2] = sender, row[3] = receiver
-    // 自分が送信者 OR 受信者のものを抽出（要件によるが、元のコードはsender_idだけ見ていたが、
-    // 受信履歴も見たい場合は row[3] === email も追加可能。
-    // 元のロジックを尊重しつつ、高速化するなら以下）
+  // ★v4.4のロジック復活: 200件ずつ後ろから遡って取得し、20件溜まったら即終了
+  // これにより、最近履歴がある人は200行しか読まないので爆速になる
+  while(curr >= 2 && history.length < 20) {
+    const start = Math.max(2, curr - CHUNK + 1);
+    const numRows = curr - start + 1;
     
-    // 元コードのロジック: if(data[i][2] === email) (C列=senderが自分)
-    // ここでは「自分に関係する」履歴の方が親切なので、送信または受信でフィルタする場合:
-    if(row[2] === email || row[3] === email) {
-      history.push({
-        timestamp: row[1],
-        sender_id: row[2],
-        receiver_id: row[3], // 追加: 誰とのやり取りか
-        sender_dept: row[4],
-        amount: row[6],
-        value: row[9],
-        message: row[10],
-        type: row[2] === email ? 'sent' : 'received' // 判別用
-      });
-      if(history.length >= 20) break;
+    // A列(1)からK列(11)まで取得
+    // Index: 0:ID, 1:Time, 2:Sender, 3:Receiver, 4:S_Dept, 5:R_Dept, 6:Amt, 7:Mult, 8:Cost, 9:Val, 10:Msg
+    const data = sheet.getRange(start, 1, numRows, 11).getValues();
+    
+    // 後ろから走査
+    for(let i = data.length - 1; i >= 0; i--) {
+      const row = data[i];
+      // 自分が送信者(row[2]) または 受信者(row[3])
+      if(row[2] === email || row[3] === email) {
+        history.push({
+          timestamp: row[1],
+          sender_id: row[2],
+          receiver_id: row[3],
+          sender_dept: row[4],
+          amount: row[6],
+          value: row[9],
+          message: row[10],
+          type: row[2] === email ? 'sent' : 'received'
+        });
+        if(history.length >= 20) break;
+      }
     }
+    
+    curr -= CHUNK;
+    // 安全策: 最大3000行遡ったら諦める（無限ループ防止）
+    if(lastRow - curr > 3000) break;
   }
   
-  cache.put('HISTORY_' + email, JSON.stringify(history), 300);
+  // キャッシュ時間は6時間に設定
+  cache.put('HISTORY_' + email, JSON.stringify(history), 21600);
   return { success: true, history: history };
 }
 
