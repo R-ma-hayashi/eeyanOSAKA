@@ -722,3 +722,48 @@ function getLastMonthMVP() {
   if (!sheet || sheet.getLastRow() < 2) return null;
   return sheet.getRange(sheet.getLastRow(), 2).getValue();
 }
+
+// --- Email Management Functions ---
+
+/**
+ * E-yanCoin関連の送信済みメールを削除
+ * ただし、ma-hayashi@race-number.co.jp宛ては保護
+ */
+function deleteEyanCoinSentEmails() {
+  try {
+    // E-yanCoin関連のメールを検索
+    const query = 'subject:【E-yan Coin】 in:sent';
+    const threads = GmailApp.search(query, 0, 100); // 最大100件
+
+    let deletedCount = 0;
+    let protectedCount = 0;
+
+    threads.forEach(thread => {
+      const messages = thread.getMessages();
+      if (messages.length === 0) return;
+
+      // 最初のメッセージの宛先を確認
+      const firstMessage = messages[0];
+      const toAddress = firstMessage.getTo();
+
+      // ma-hayashi宛てかチェック
+      if (toAddress.includes('ma-hayashi@race-number.co.jp')) {
+        protectedCount++;
+        console.log('Protected: ' + toAddress);
+      } else {
+        // ma-hayashi以外は削除
+        thread.moveToTrash();
+        deletedCount++;
+        console.log('Deleted: ' + toAddress);
+      }
+    });
+
+    console.log(`処理完了: ${deletedCount}件削除, ${protectedCount}件保護`);
+    return { success: true, deleted: deletedCount, protected: protectedCount };
+
+  } catch (e) {
+    console.error('メール削除エラー: ' + e.toString());
+    return { success: false, error: e.toString() };
+  }
+}
+
