@@ -171,7 +171,7 @@ function admin_updateUserJson() {
 }
 
 // --- Core Logic : 送金処理 ---
-function sendAirCoin(receiverEmail, comment, amountInput, shareFlag) {
+function sendAirCoin(receiverEmail, comment, amountInput) {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10000)) return { success: false, message: '混雑中。再試行してください。' };
 
@@ -244,19 +244,16 @@ function sendAirCoin(receiverEmail, comment, amountInput, shareFlag) {
       userSheet.getRange(receiverRow + 2, colIdx.rank + 1).setValue(newRank);
     }
 
-    // shareFlagのデフォルトはtrue
-    const isShareable = (shareFlag === undefined || shareFlag === null) ? true : shareFlag;
-
     transSheet.appendRow([
       Utilities.getUuid(), now, senderEmail, receiverEmail,
       senderData[colIdx.department], receiverData[colIdx.department],
-      amount, multiplier, amount, valueGained, comment, isShareable
+      amount, multiplier, amount, valueGained, comment
     ]);
 
     const cache = CacheService.getScriptCache();
     cache.remove('HISTORY_' + senderEmail);
     cache.remove('HISTORY_' + receiverEmail);
-    cache.remove('RANKINGS_v6'); // キャッシュクリア（バージョン更新）
+    cache.remove('RANKINGS_v5'); // キャッシュクリア
 
     return {
       success: true, message: '送信完了！',
@@ -273,7 +270,7 @@ function sendAirCoin(receiverEmail, comment, amountInput, shareFlag) {
 // --- Ranking Logic (Updated for Best Giver) ---
 function getRankings() {
   const cache = CacheService.getScriptCache();
-  const cached = cache.get('RANKINGS_v6'); // キャッシュバージョンアップ
+  const cached = cache.get('RANKINGS_v5');
   if (cached) return { success: true, rankings: JSON.parse(cached) };
 
   const ss = getSpreadsheet();
@@ -304,53 +301,39 @@ function getRankings() {
   // 2. Department & Best Giver (Scan Transactions)
   const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
   const lastRow = transSheet.getLastRow();
-
-  const deptSendCountMap = {}; // { deptName: countOfSending }
-  const deptReceiveCountMap = {}; // { deptName: countOfReceiving }
+  
+  const deptCountMap = {}; // { deptName: countOfSending }
   const giverMap = {}; // { email: countOfSending }
 
   if(lastRow >= 2) {
-    // パフォーマンス最適化: 最新1000件のみ取得（今月のデータ想定）
-    const start = Math.max(2, lastRow - 999);
-    const numRows = lastRow - start + 1;
-
-    // Transactions: Col C(3)=Sender, D(4)=Receiver, E(5)=SenderDept, F(6)=ReceiverDept
-    // getRange(start, 3, rows, 4) => C, D, E, F (必要な列のみ取得)
-    // Index: 0:Sender, 1:Receiver, 2:SenderDept(E), 3:ReceiverDept(F)
-    const tData = transSheet.getRange(start, 3, numRows, 4).getValues();
-
-    // 高速ループ処理
-    for(let i = 0; i < tData.length; i++) {
-      const r = tData[i];
+    const start = 2;
+    // Transactions: Col C(3)=Sender, E(5)=SenderDept, F(6)=ReceiverDept, G(7)=Amount, J(10)=ValueGained
+    // getRange(start, 3, rows, 8) => C, D, E, F, G, H, I, J
+    // Index: 0:Sender, 2:SenderDept(E), 3:ReceiverDept, 4:Amount, 7:ValueGained
+    const tData = transSheet.getRange(start, 3, lastRow - start + 1, 8).getValues();
+    
+    tData.forEach(r => {
       const sender = r[0];
-      const receiver = r[1];
-      const senderDept = r[2];
-      const receiverDept = r[3];
-
-      // 部署カウント
-      if(senderDept) deptSendCountMap[senderDept] = (deptSendCountMap[senderDept]||0) + 1;
-      if(receiverDept) deptReceiveCountMap[receiverDept] = (deptReceiveCountMap[receiverDept]||0) + 1;
-
-      // ギバーカウント
+      const senderDept = r[2]; // E列: Sender Dept
+      // const amount = Number(r[4]||0); // コイン枚数は使わない
+      
+      // Dept Ranking (Based on Sending Activity / Headcount)
+      // E列の部署ごとの出現数をカウント
+      if(senderDept) deptCountMap[senderDept] = (deptCountMap[senderDept]||0) + 1;
+      
+      // Giver Ranking (Based on Sent Count)
+      // 送信回数をカウント（+1）
       if(sender) giverMap[sender] = (giverMap[sender]||0) + 1;
-    }
+    });
   }
 
-  // Format Dept Ranking (Per Capita - Send & Receive)
-  const allDepts = new Set([...Object.keys(deptSendCountMap), ...Object.keys(deptReceiveCountMap)]);
-  const dept = Array.from(allDepts).map(k => {
-    const sendCount = deptSendCountMap[k] || 0;
-    const receiveCount = deptReceiveCountMap[k] || 0;
+  // Format Dept Ranking (Per Capita)
+  const dept = Object.keys(deptCountMap).map(k => {
+    const count = deptCountMap[k];
     const headcount = deptHeadcount[k] || 1; // 0除算防止
-    const sendPerCapita = parseFloat((sendCount / headcount).toFixed(2));
-    const receivePerCapita = parseFloat((receiveCount / headcount).toFixed(2));
-    return {
-      name: k,
-      sendScore: sendPerCapita,
-      receiveScore: receivePerCapita,
-      totalScore: parseFloat((sendPerCapita + receivePerCapita).toFixed(2))
-    };
-  }).sort((a,b) => b.totalScore - a.totalScore).slice(0, 5);
+    const perCapitaScore = parseFloat((count / headcount).toFixed(2)); // 小数点2位まで
+    return { name: k, score: perCapitaScore };
+  }).sort((a,b) => b.score - a.score).slice(0, 5);
   
   // Format Giver Ranking (Count Based)
   const giver = Object.keys(giverMap).map(k => {
@@ -359,7 +342,7 @@ function getRankings() {
   }).sort((a,b) => b.score - a.score).slice(0, 10);
     
   const rankings = { mvp: mvp, dept: dept, giver: giver };
-  cache.put('RANKINGS_v6', JSON.stringify(rankings), 900); // 15 min cache
+  cache.put('RANKINGS_v5', JSON.stringify(rankings), 900); // 15 min cache
   return { success: true, rankings: rankings };
 }
 
@@ -556,107 +539,6 @@ function analyzeEconomyState() {
 
 // --- Batch Functions ---
 
-/**
- * 共有可能なメッセージ一覧を全ユーザーに配信
- * トリガー推奨: 毎週金曜 17:00など
- */
-function sendPublicMessageDigest() {
-  try {
-    const ss = getSpreadsheet();
-    const userSheet = ss.getSheetByName(SHEET_NAMES.USERS);
-    const transSheet = ss.getSheetByName(SHEET_NAMES.TRANSACTIONS);
-
-    if (!userSheet || !transSheet) return;
-
-    const now = new Date();
-    // 過去7日間のデータを取得
-    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-    // Transactionsシートから flag=true のデータのみ取得
-    const lastRow = transSheet.getLastRow();
-    if (lastRow < 2) return; // データがない場合は終了
-
-    // 全データ取得 (A～L列: ID, Time, Sender, Receiver, SenderDept, ReceiverDept, Amount, Mult, Cost, Value, Message, Flag)
-    const transData = transSheet.getRange(2, 1, lastRow - 1, 12).getValues();
-
-    // ユーザーマップ作成（email → name）
-    const userData = userSheet.getDataRange().getValues();
-    userData.shift(); // ヘッダー削除
-    const userMap = {};
-    const allUserEmails = [];
-    userData.forEach(row => {
-      userMap[row[0]] = row[1]; // email → name
-      allUserEmails.push(row[0]);
-    });
-
-    // 共有可能なメッセージを収集
-    const publicMessages = [];
-    transData.forEach(row => {
-      const timestamp = new Date(row[1]);
-      const senderEmail = row[2];
-      const receiverEmail = row[3];
-      const message = row[10];
-      const shareFlag = row[11]; // L列
-
-      // flag=true かつ過去7日間のデータのみ
-      if (shareFlag === true && timestamp >= sevenDaysAgo) {
-        const senderName = userMap[senderEmail] || senderEmail.split('@')[0];
-        const receiverName = userMap[receiverEmail] || receiverEmail.split('@')[0];
-        const dateStr = Utilities.formatDate(timestamp, 'Asia/Tokyo', 'MM/dd HH:mm');
-
-        publicMessages.push({
-          date: dateStr,
-          sender: senderName,
-          receiver: receiverName,
-          message: message
-        });
-      }
-    });
-
-    if (publicMessages.length === 0) {
-      console.log('共有可能なメッセージがありません');
-      return;
-    }
-
-    // メール本文作成
-    let emailBody = `お疲れ様です！\n\n`;
-    emailBody += `今週（過去7日間）の社内メッセージをお届けします 📬\n`;
-    emailBody += `皆さんがシェアしてくれた温かいメッセージをご覧ください！\n\n`;
-    emailBody += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-
-    publicMessages.forEach(msg => {
-      emailBody += `【${msg.date}】\n`;
-      emailBody += `${msg.sender} さん → ${msg.receiver} さん\n`;
-      emailBody += `「${msg.message}」\n\n`;
-    });
-
-    emailBody += `━━━━━━━━━━━━━━━━━━━━\n\n`;
-    emailBody += `今週も素敵なメッセージがたくさん飛び交っていますね！\n`;
-    emailBody += `あなたも感謝の気持ちを伝えてみませんか？\n\n`;
-    emailBody += `E-yan Coinアプリ: ${ScriptApp.getService().getUrl()}\n\n`;
-    emailBody += `※このメッセージは送信時に「全体共有する」を選択した内容のみ掲載しています`;
-
-    // 全ユーザーにメール送信
-    allUserEmails.forEach(email => {
-      try {
-        GmailApp.sendEmail(
-          email,
-          '【E-yan Coin】今週のメッセージまとめ 📬',
-          emailBody
-        );
-        Utilities.sleep(500); // レート制限対策
-      } catch(e) {
-        console.error(`Failed to send to ${email}:`, e);
-      }
-    });
-
-    console.log(`メッセージ一覧を ${allUserEmails.length} 人に配信完了`);
-
-  } catch(e) {
-    console.error('sendPublicMessageDigest Error:', e);
-  }
-}
-
 function sendDailyRecap() {
   const now = new Date();
   const isFirstDayOfMonth = (now.getDate() === 1);
@@ -801,7 +683,7 @@ function resetMonthlyData() {
     const cache = CacheService.getScriptCache();
     cache.remove('ALL_USERS_DATA_v4');
     cache.remove('ECONOMY_STATE_v4');
-    cache.remove('RANKINGS_v6');
+    cache.remove('RANKINGS_v5');
   } catch (e) { console.error(e); } finally { lock.releaseLock(); }
 }
 
