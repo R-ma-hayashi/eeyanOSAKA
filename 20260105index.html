@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <base target="_top">
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+    <title>E-yan Coin App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+      @keyframes float { 0% { transform: translateY(0px); } 50% { transform: translateY(-6px); } 100% { transform: translateY(0px); } }
+      .coin-anim { animation: float 3s ease-in-out infinite; }
+      @keyframes slideUpFade { 0% { transform: translateY(20px); opacity: 0; } 100% { transform: translateY(0); opacity: 1; } }
+      .toast-enter { animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+      @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+      .loader { border: 4px solid #f3f3f3; border-top: 4px solid #6366f1; border-radius: 50%; width: 32px; height: 32px; animation: spin 1s linear infinite; }
+      body { transition: background 0.8s ease; padding-bottom: 100px; overscroll-behavior-y: none; }
+      .hidden { display: none !important; }
+      .tab-active { color: #4f46e5; }
+      .tab-inactive { color: #9ca3af; }
+      .scrollbar-hide::-webkit-scrollbar { display: none; }
+      .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+      /* Ranking Transitions */
+      .ranking-hidden {
+        max-height: 0 !important;
+        opacity: 0 !important;
+        overflow: hidden !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        border: none !important;
+        transition: all 0.3s ease;
+      }
+      .ranking-visible {
+        max-height: 100px;
+        opacity: 1;
+        overflow: hidden;
+        transition: all 0.5s ease;
+      }
+    </style>
+  </head>
+
+  <body class="min-h-screen text-gray-800 font-sans bg-gray-50">
+
+    <div id="loadingOverlay" class="fixed inset-0 bg-white/90 z-[9999] flex flex-col items-center justify-center transition-opacity duration-300">
+      <div class="loader mb-3"></div>
+      <p id="loadingText" class="text-gray-500 text-sm font-bold">起動中...</p>
+    </div>
+
+    <header class="sticky top-0 z-40 backdrop-blur-md bg-white/70 shadow-sm border-b border-white/20">
+      <div class="max-w-md mx-auto px-4 py-3 flex justify-between items-center">
+        <div class="flex items-center gap-2">
+          <i class="fa-solid fa-coins text-yellow-500 text-2xl coin-anim"></i>
+          <h1 class="font-bold text-lg text-gray-800 tracking-tight">E-yan Coin</h1>
+        </div>
+        <div id="headerWallet" class="hidden">
+          <div class="bg-yellow-100/80 text-yellow-800 px-3 py-1 rounded-full font-bold shadow-sm flex items-center border border-yellow-200">
+            <i class="fa-solid fa-wallet mr-2 text-sm"></i>
+            <span id="walletBalance">--</span>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-md mx-auto p-4 space-y-6">
+      <div id="view-auth" class="flex flex-col items-center justify-center py-10 space-y-6 hidden">
+         <div class="p-6 bg-white rounded-3xl shadow-xl shadow-indigo-100 text-center w-full">
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">Welcome!</h2>
+            <button onclick="handleLogin()" class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-xl shadow-lg transition active:scale-95">はじめる</button>
+         </div>
+      </div>
+
+      <div id="view-register" class="hidden">
+        <div class="bg-white/90 backdrop-blur rounded-2xl shadow-lg p-6">
+          <h2 class="text-xl font-bold text-gray-800 mb-6">初回登録</h2>
+          <form onsubmit="handleRegister(event)" class="space-y-4">
+            <div><label class="block text-xs font-bold text-gray-500 mb-1">お名前</label><input type="text" name="name" required class="w-full p-3 bg-gray-50 rounded-xl outline-none"></div>
+            <div><label class="block text-xs font-bold text-gray-500 mb-1">所属部署</label><select name="department" id="registerDeptSelect" required class="w-full p-3 bg-gray-50 rounded-xl outline-none"></select></div>
+            <button type="submit" class="w-full bg-indigo-600 text-white font-bold py-3 rounded-xl mt-4 shadow-md">登録する</button>
+          </form>
+        </div>
+      </div>
+
+      <div id="view-app" class="hidden">
+        <button onclick="switchTab('tab-send')" class="fixed bottom-24 right-5 z-40 bg-gradient-to-r from-indigo-500 to-purple-600 text-white w-14 h-14 rounded-full shadow-xl flex items-center justify-center transition hover:scale-105 active:scale-90"><i class="fa-regular fa-paper-plane text-2xl"></i></button>
+
+        <div id="tab-home" class="space-y-6">
+          <div class="bg-white rounded-2xl shadow-sm border border-gray-100 p-5 relative overflow-hidden">
+            <div class="relative z-10">
+              <div class="flex justify-between items-start mb-2">
+                <div>
+                   <p class="text-xs text-gray-500 mb-1" id="userDept">--</p>
+                   <h2 class="text-xl font-bold" id="userName">--</h2>
+                </div>
+                <div class="flex flex-col items-end gap-2">
+                  <div class="flex items-center bg-indigo-50 px-2 py-1 rounded-lg">
+                    <span id="rankAvatar" class="text-xl mr-1">🥺</span>
+                    <span class="text-xs font-bold text-indigo-700" id="userRank">--</span>
+                    <span id="mvpCrown" class="hidden ml-1 text-sm">👑</span>
+                  </div>
+                  <button onclick="handleSettings()" class="text-gray-400 hover:text-indigo-600 transition">
+                    <i class="fa-solid fa-gear text-lg"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div class="mt-4 p-3 bg-gray-50 rounded-lg">
+                <p class="text-xs text-gray-500 mb-1">今月の景気 (全社流通量)</p>
+                <div class="flex items-center gap-2">
+                  <span id="economyIcon" class="text-3xl">--</span>
+                  <span id="economyStatusText" class="font-bold text-gray-700 text-sm">--</span>
+                </div>
+              </div>
+
+              <div class="mt-5">
+                  <div class="flex justify-between text-xs font-bold mb-1">
+                    <span class="text-gray-500">配る用コイン残高</span>
+                    <span id="progressText" class="text-indigo-600">あと--枚！</span>
+                  </div>
+                  <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                    <div id="coinProgressBar" class="h-full bg-indigo-500 rounded-full transition-all duration-500" style="width: 0%"></div>
+                  </div>
+                  <div class="flex justify-between mt-1">
+                     <p class="text-[10px] text-gray-400 mt-1">毎月1日にリセットされます！</p>
+                     <p class="text-[10px] text-gray-400 mt-1">本日送信済み: <span id="dailySentCount">0</span></p>
+                  </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="bg-blue-50 p-4 rounded-xl border border-blue-100 flex items-start">
+             <i class="fa-solid fa-circle-info text-blue-500 mt-1 mr-3"></i>
+             <div>
+               <h3 class="font-bold text-blue-800 text-sm">他部署へはボーナス！</h3>
+               <p class="text-xs text-blue-600 mt-1">異なる部署の人に送ると、あなたの消費はそのままで、相手には<span class="font-bold underline">価値がアップ</span>して届きます。</p>
+             </div>
+          </div>
+        </div>
+
+        <div id="tab-send" class="hidden space-y-4">
+          <div class="bg-white/90 backdrop-blur rounded-2xl shadow-sm p-5 pb-8">
+            <h3 class="text-sm font-bold text-gray-500 mb-3">1. だれに送る？</h3>
+            <div class="mb-4"><input type="text" id="recipientSearch" placeholder="名前や部署で検索..." class="w-full p-3 bg-gray-50 border-none rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-300 transition" oninput="filterRecipients()"></div>
+            <select id="recipientSelect" class="w-full p-3 bg-gray-50 border-none rounded-xl mb-6 outline-none appearance-none font-bold text-gray-700" onchange="updateEstimation()"><option value="">読み込み中...</option></select>
+
+            <h3 class="text-sm font-bold text-gray-500 mb-3">2. 何枚送る？</h3>
+            <div class="flex items-center justify-between bg-gray-50 rounded-xl p-2 mb-2">
+               <button onclick="stepAmount(-1)" class="w-12 h-12 bg-white rounded-lg shadow-sm text-gray-600 font-bold"><i class="fa-solid fa-minus"></i></button>
+               <div class="text-center"><span id="displayAmount" class="text-3xl font-bold text-indigo-600 font-mono">1</span><span class="text-xs text-gray-400 font-bold block">COINS</span></div>
+               <button onclick="stepAmount(1)" class="w-12 h-12 bg-white rounded-lg shadow-sm text-gray-600 font-bold"><i class="fa-solid fa-plus"></i></button>
+            </div>
+            <div id="estimationBox" class="hidden bg-yellow-50 border border-yellow-100 rounded-lg p-3 mb-6 text-yellow-800 text-xs font-bold text-center"><i class="fa-solid fa-calculator mr-1"></i><span id="estimationResult">--</span></div>
+
+            <h3 class="text-sm font-bold text-gray-500 mb-3">3. メッセージ</h3>
+            <textarea id="messageInput" rows="2" class="w-full p-3 bg-gray-50 border-none rounded-xl mb-2 text-sm outline-none" placeholder="ありがとう！"></textarea>
+
+            <!-- ★共有不可フラグ（1=NG, 0=OK） -->
+            <div class="flex items-center gap-2 mb-4 px-1">
+              <input type="checkbox" id="shareFlag" class="w-5 h-5 text-indigo-600 rounded focus:ring-indigo-500 border-gray-300">
+              <label for="shareFlag" class="text-sm font-bold text-gray-600 cursor-pointer">共有不可の場合はチェック</label>
+            </div>
+
+            <div class="flex gap-2 overflow-x-auto pb-2 scrollbar-hide mb-4">
+              <button type="button" onclick="addTag('🙏')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🙏</button>
+              <button type="button" onclick="addTag('👍')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">👍</button>
+              <button type="button" onclick="addTag('神🪽')" class="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg font-bold">神🪽</button>
+              <button type="button" onclick="addTag('草🌱')" class="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg font-bold">草🌱</button>
+              <button type="button" onclick="addTag('🔥')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🔥</button>
+              <button type="button" onclick="addTag('🙇')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🙇</button>
+              <button type="button" onclick="addTag('🍺')" class="text-xl bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg">🍺</button>
+            </div>
+            <button onclick="submitSend()" id="sendBtn" class="w-full bg-indigo-600 text-white font-bold py-4 rounded-xl shadow-lg transition disabled:opacity-50">送信する</button>
+          </div>
+        </div>
+
+        <div id="tab-ranking" class="hidden space-y-5 pb-10">
+           <!-- 1. 部署対抗 - 送信部門 (一人当たり平均) -->
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4">
+             <h2 class="font-bold text-gray-700 mb-4 text-sm flex items-center"><i class="fa-solid fa-building mr-2 text-indigo-500"></i>部署対抗 - 送信部門 (一人当たり平均)</h2>
+             <div id="deptList" class="space-y-3 min-h-[50px]">読み込み中...</div>
+           </div>
+
+           <!-- 2. 部署別 コイン総数 (NEW) -->
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4">
+             <h2 class="font-bold text-gray-700 mb-4 text-sm flex items-center"><i class="fa-solid fa-sack-dollar mr-2 text-green-500"></i>部署別 コイン総数</h2>
+             <div id="deptTotalList" class="space-y-3 min-h-[50px]">読み込み中...</div>
+           </div>
+
+           <!-- 3. 今月のMVP -->
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4">
+             <h2 class="font-bold text-gray-700 mb-4 text-sm flex items-center"><i class="fa-solid fa-crown mr-2 text-yellow-500"></i>今月のMVP (受信)</h2>
+             <div id="mvpList" class="space-y-3 min-h-[50px] text-center text-xs text-gray-400 py-4">読み込み中...</div>
+             <button onclick="toggleRanking('mvpList')" id="btn-mvpList" class="hidden w-full text-xs text-gray-400 mt-2 py-1 hover:text-indigo-600 transition">もっと見る <i class="fa-solid fa-chevron-down ml-1"></i></button>
+           </div>
+
+           <!-- 4. ベストギバー -->
+           <div class="bg-white/80 backdrop-blur rounded-2xl shadow-sm p-4">
+             <h2 class="font-bold text-gray-700 mb-4 text-sm flex items-center"><i class="fa-solid fa-hand-holding-heart mr-2 text-pink-500"></i>ベストギバー (送信)</h2>
+             <div id="giverList" class="space-y-3 min-h-[50px] text-center text-xs text-gray-400 py-4">読み込み中...</div>
+             <button onclick="toggleRanking('giverList')" id="btn-giverList" class="hidden w-full text-xs text-gray-400 mt-2 py-1 hover:text-indigo-600 transition">もっと見る <i class="fa-solid fa-chevron-down ml-1"></i></button>
+           </div>
+
+           <!-- Archive Button -->
+           <div class="text-center pt-4">
+             <button onclick="showPastRankings()" class="bg-indigo-50 text-indigo-600 px-6 py-2 rounded-full text-xs font-bold shadow-sm border border-indigo-100 hover:bg-indigo-100 transition">
+               <i class="fa-solid fa-clock-rotate-left mr-2"></i>過去のランキングはこちら
+             </button>
+           </div>
+        </div>
+
+        <div id="tab-history" class="hidden space-y-4"><h2 class="text-lg font-bold text-gray-700 px-2">履歴</h2><div id="historyContainer" class="space-y-3 pb-20"><div class="text-center text-xs text-gray-400 py-10">読み込み中...</div></div></div>
+      </div>
+    </main>
+
+    <div id="modal-archive" class="fixed inset-0 bg-black/50 z-[100] hidden flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl w-full max-w-sm max-h-[90vh] flex flex-col shadow-2xl">
+        <div class="p-4 border-b border-gray-100 flex justify-between items-center shrink-0">
+          <h3 class="font-bold text-gray-700">過去のランキング履歴</h3>
+          <button onclick="closeArchive()" class="w-8 h-8 rounded-full bg-gray-100 text-gray-500 hover:bg-gray-200"><i class="fa-solid fa-xmark"></i></button>
+        </div>
+
+        <div class="px-4 py-2 border-b border-gray-100 bg-gray-50">
+           <select id="archiveMonthSelect" onchange="loadPastRankingDetail(this.value)" class="w-full p-2 rounded-lg border border-gray-300 text-sm font-bold text-center">
+             <option value="">読み込み中...</option>
+           </select>
+        </div>
+
+        <div id="archiveContent" class="p-4 overflow-y-auto flex-1 space-y-6 text-sm">
+           <p id="archiveLoader" class="text-center text-gray-400 text-xs hidden">データ取得中...</p>
+
+           <div>
+             <h4 class="font-bold text-xs text-yellow-600 mb-2 border-b border-yellow-100 pb-1">👑 月間MVP</h4>
+             <div id="past-mvp" class="space-y-2"></div>
+           </div>
+
+           <div>
+             <h4 class="font-bold text-xs text-indigo-600 mb-2 border-b border-indigo-100 pb-1">🏢 部署対抗(一人当たり平均)</h4>
+             <div id="past-dept" class="space-y-2"></div>
+           </div>
+
+           <div>
+             <h4 class="font-bold text-xs text-pink-600 mb-2 border-b border-pink-100 pb-1">❤️ ベストギバー</h4>
+             <div id="past-giver" class="space-y-2"></div>
+           </div>
+        </div>
+      </div>
+    </div>
+
+    <nav id="bottomNav" class="fixed bottom-0 w-full bg-white/90 backdrop-blur border-t border-gray-200 pb-safe hidden z-50">
+      <div class="flex justify-around items-center max-w-md mx-auto">
+        <button onclick="switchTab('tab-home')" id="nav-home" class="flex-1 py-3 flex flex-col items-center tab-active"><i class="fa-solid fa-house text-xl mb-1"></i><span class="text-[10px] font-bold">ホーム</span></button>
+        <button onclick="switchTab('tab-send')" id="nav-send" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-paper-plane text-xl mb-1"></i><span class="text-[10px] font-bold">送る</span></button>
+        <button onclick="switchTab('tab-ranking')" id="nav-ranking" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-chart-simple text-xl mb-1"></i><span class="text-[10px] font-bold">ランキング</span></button>
+        <button onclick="switchTab('tab-history')" id="nav-history" class="flex-1 py-3 flex flex-col items-center tab-inactive"><i class="fa-solid fa-clock-rotate-left text-xl mb-1"></i><span class="text-[10px] font-bold">履歴</span></button>
+      </div>
+    </nav>
+
+    <div id="toast" class="fixed bottom-24 left-4 right-4 text-white px-4 py-3 rounded-xl shadow-2xl z-[100] hidden flex items-center justify-between transition-all transform duration-300 translate-y-10 opacity-0">
+      <div class="flex items-center gap-3">
+        <i id="toastIcon" class="fa-solid fa-circle-check text-xl"></i>
+        <div class="text-sm">
+          <p class="font-bold" id="toastTitle">Success</p>
+          <p class="text-xs text-gray-100" id="toastMsg">処理完了</p>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // Mock Data (GAS環境外用)
+      if (typeof google === 'undefined') {
+         console.warn('Mock Mode');
+         window.google = { script: { run: {
+            withSuccessHandler: function(f) { this.s=f; return this; },
+            withFailureHandler: function(f) { this.f=f; return this; },
+            getInitialData: function() { setTimeout(()=>this.s({success:true, user:{name:'Mock User',department:'営業部',rank:'商人',wallet_balance:80,dailySent:5}, economy:'level2', config:{MULTIPLIER_DIFF_DEPT:1.2, INITIAL_COIN:1000}, dataVersion:'999'}), 800); },
+            getUserListData: function() { setTimeout(()=>this.s({success:true, list:[['a@x.com','Aさん','営業部'],['b@x.com','Bさん','開発部']], from:'Mock'}), 500); },
+            sendAirCoin: function() { setTimeout(()=>this.s({success:true, message:'Mock Sent', newBalance:70, dailySent:6}), 800); },
+            getRankings: function() {
+              setTimeout(()=>this.s({success:true, rankings:{
+                mvp: Array(12).fill(0).map((_,i)=>({name:`MVP User ${i}`,dept:'Dev',score:100-i})),
+                dept: [{name:'Dev',score:5.2}],
+                deptTotal: [{name:'Dev',score:12000}],
+                giver: Array(8).fill(0).map((_,i)=>({name:`Giver ${i}`,dept:'Sales',score:50-i}))
+              }}), 500);
+            },
+            getUserHistory: function() { setTimeout(()=>this.s({success:true, history:[]}), 500); },
+            getArchiveMonths: function() { setTimeout(()=>this.s({success:true, months:['2025_01','2024_12']}), 500); },
+            getArchiveRankingData: function(ym) {
+               setTimeout(()=>this.s({success:true, rankings:{
+                  mvp: [{name:'PastMVP',dept:'A',score:999}],
+                  dept: [{name:'PastDept',score:5.8}],
+                  giver: [{name:'PastGiver',dept:'B',score:200}]
+               }}), 500);
+            }
+         }}};
+      }
+
+      let currentUser = null;
+      let allUsers = [];
+      let appConfig = {};
+      let sendAmount = 1;
+      const RANK_MAP = { '素浪人': '🥺', '丁稚': '🐣', '商人': '👘', '豪商': '🐯', '天下人': '👑' };
+
+      window.onload = () => handleLogin();
+
+      function handleLogin() {
+        showLoading(true);
+        google.script.run.withSuccessHandler(initSuccess).withFailureHandler(initFail).getInitialData();
+      }
+
+      function initSuccess(data) {
+        showLoading(false);
+        if (data.error === 'NOT_REGISTERED') {
+          renderDeptOptions(data.departments);
+          document.getElementById('view-auth').classList.add('hidden');
+          document.getElementById('view-register').classList.remove('hidden');
+        } else if (data.success) {
+          currentUser = data.user;
+          appConfig = data.config;
+          updateUI();
+          updateEconomyUI(data.economy);
+
+          document.getElementById('view-auth').classList.add('hidden');
+          document.getElementById('view-app').classList.remove('hidden');
+          document.getElementById('headerWallet').classList.remove('hidden');
+          document.getElementById('bottomNav').classList.remove('hidden');
+          switchTab('tab-home');
+          syncUserList(data.dataVersion);
+        }
+      }
+
+      function initFail(e) {
+        showLoading(false);
+        showToast('起動エラー', e.message, true);
+      }
+
+      function syncUserList(serverVersion) {
+        const localVersion = localStorage.getItem('EYAN_DATA_VERSION');
+        const localData = localStorage.getItem('EYAN_USER_LIST');
+        if (localVersion === serverVersion && localData) {
+            parseAndSetUsers(JSON.parse(localData));
+        } else {
+            google.script.run.withSuccessHandler(res => {
+               if (res.success) {
+                  localStorage.setItem('EYAN_DATA_VERSION', serverVersion);
+                  localStorage.setItem('EYAN_USER_LIST', JSON.stringify(res.list));
+                  parseAndSetUsers(res.list);
+               }
+            }).getUserListData();
+        }
+      }
+
+      function parseAndSetUsers(listArray) {
+        allUsers = listArray.map(row => ({ email: row[0], name: row[1], department: row[2] }));
+        renderRecipientOptions(allUsers);
+      }
+
+      function updateUI() {
+        if(!currentUser) return;
+        document.getElementById('userName').textContent = currentUser.name;
+        document.getElementById('userDept').textContent = currentUser.department;
+        document.getElementById('userRank').textContent = currentUser.rank;
+        document.getElementById('rankAvatar').textContent = RANK_MAP[currentUser.rank] || '🥺';
+        if (currentUser.isMVP) {
+            document.getElementById('mvpCrown').classList.remove('hidden');
+        } else {
+            document.getElementById('mvpCrown').classList.add('hidden');
+        }
+
+        document.getElementById('walletBalance').textContent = currentUser.wallet_balance;
+
+        const initialCoin = appConfig.INITIAL_COIN || 1000;
+        const balance = currentUser.wallet_balance;
+        const pct = Math.min((balance / initialCoin) * 100, 100);
+
+        const bar = document.getElementById('coinProgressBar');
+        const progText = document.getElementById('progressText');
+
+        bar.style.width = pct + '%';
+        bar.className = 'h-full rounded-full transition-all duration-500';
+
+        if (balance > 700) {
+              bar.classList.add('bg-red-500');
+              progText.textContent = `あと${balance}枚配らな！`;
+              progText.className = "text-red-500 font-bold";
+        } else if (balance > 300) {
+              bar.classList.add('bg-yellow-400');
+              progText.textContent = `あと${balance}枚！`;
+              progText.className = "text-yellow-600 font-bold";
+        } else {
+              bar.classList.add('bg-green-500');
+              progText.textContent = `残り${balance}枚、ええ感じ！`;
+              progText.className = "text-green-600 font-bold";
+        }
+
+        document.getElementById('dailySentCount').textContent = currentUser.dailySent;
+      }
+
+      function updateEconomyUI(level) {
+        const body = document.body;
+        const txt = document.getElementById('economyStatusText');
+        const icon = document.getElementById('economyIcon');
+
+        body.className = "min-h-screen text-gray-800 font-sans transition-colors duration-1000";
+
+        if (level === 'level3') {
+          body.classList.add('bg-gradient-to-br', 'from-pink-50', 'to-rose-100');
+          txt.innerHTML = '<span class="text-pink-600">景気ええやん！(Lv.3)</span>';
+          icon.textContent = '🐯 ❤️‍🔥';
+        } else if (level === 'level2') {
+          body.classList.add('bg-gradient-to-br', 'from-purple-50', 'to-indigo-100');
+          txt.innerHTML = '<span class="text-indigo-600">通常運転 (Lv.2)</span>';
+          icon.textContent = '🏢 ☁️';
+        } else {
+          body.classList.add('bg-gradient-to-br', 'from-sky-50', 'to-blue-100');
+          txt.innerHTML = '<span class="text-blue-600">不況... (Lv.1)</span>';
+          icon.textContent = '🥺 🍃';
+        }
+      }
+
+      function switchTab(tabId) {
+        ['tab-home', 'tab-send', 'tab-ranking', 'tab-history'].forEach(id => document.getElementById(id).classList.add('hidden'));
+        ['nav-home', 'nav-send', 'nav-ranking', 'nav-history'].forEach(id => {
+          const el = document.getElementById(id);
+          el.classList.remove('tab-active'); el.classList.add('tab-inactive');
+          el.querySelector('i').classList.remove('text-indigo-600');
+        });
+        document.getElementById(tabId).classList.remove('hidden');
+        const active = document.getElementById(tabId.replace('tab', 'nav'));
+        active.classList.add('tab-active'); active.classList.remove('tab-inactive');
+        active.querySelector('i').classList.add('text-indigo-600');
+
+        if (tabId === 'tab-ranking') loadRankings();
+        if (tabId === 'tab-history') loadHistory();
+      }
+
+      function stepAmount(diff) {
+        let next = sendAmount + diff;
+        if (next < 1) next = 1; if (next > 10) next = 10;
+        sendAmount = next;
+        document.getElementById('displayAmount').textContent = sendAmount;
+        updateEstimation();
+      }
+      function addTag(t) { const a=document.getElementById('messageInput'); a.value=(a.value+' '+t).trim(); }
+
+      function filterRecipients() {
+        const val = document.getElementById('recipientSearch').value.toLowerCase();
+        const filtered = val ? allUsers.filter(u=>u.name.toLowerCase().includes(val)||u.department.toLowerCase().includes(val)) : allUsers;
+        renderRecipientOptions(filtered);
+      }
+      function renderRecipientOptions(list) {
+        const sel = document.getElementById('recipientSelect');
+        sel.innerHTML = '<option value="">選択してください</option>';
+        const grps = {};
+        list.forEach(u=>{ if(!grps[u.department]) grps[u.department]=[]; grps[u.department].push(u); });
+        Object.keys(grps).forEach(d=>{
+           const g = document.createElement('optgroup'); g.label=d;
+           grps[d].forEach(u=>{ const o=document.createElement('option'); o.value=u.email; o.textContent=u.name; g.appendChild(o); });
+           sel.appendChild(g);
+        });
+      }
+      function updateEstimation() {
+         const email = document.getElementById('recipientSelect').value;
+         const box = document.getElementById('estimationBox');
+         if(!email) { box.classList.add('hidden'); return; }
+         const t = allUsers.find(u=>u.email===email);
+         if(!t) return;
+         const same = t.department === currentUser.department;
+         const m = same ? 1 : (appConfig.MULTIPLIER_DIFF_DEPT||1.2);
+         const g = Math.floor(sendAmount * m);
+         box.classList.remove('hidden');
+         document.getElementById('estimationResult').textContent = same ? `同部署: 相手に ${g} pt` : `他部署: 相手に ${g} pt (${m}倍!)`;
+      }
+
+      // ★送信処理 (フラグ対応: 1=共有NG, 0=共有OK)
+      function submitSend() {
+         const email = document.getElementById('recipientSelect').value;
+         const msg = document.getElementById('messageInput').value;
+         const isHidden = document.getElementById('shareFlag').checked;
+
+         if(!email || !msg) return showToast('入力不備', '宛先とメッセージは必須です', true);
+         if(!confirm(`${sendAmount}枚送信しますか？`)) return;
+
+         const btn = document.getElementById('sendBtn'); btn.disabled=true;
+
+         google.script.run.withSuccessHandler(res=>{
+            btn.disabled=false;
+            if(res.success) {
+               showToast('送信完了', res.message);
+               currentUser.wallet_balance = res.newBalance;
+               currentUser.dailySent = res.dailySent;
+               updateUI();
+               document.getElementById('messageInput').value='';
+               document.getElementById('recipientSelect').value='';
+               document.getElementById('shareFlag').checked = false; // reset
+               switchTab('tab-home');
+            } else showToast('エラー', res.message, true);
+         }).withFailureHandler(e=>{
+             btn.disabled=false;
+             showToast('送信エラー', e.message, true);
+         }).sendAirCoin(email, msg, sendAmount, isHidden);
+      }
+
+      function loadRankings() {
+        google.script.run.withSuccessHandler(r=>{
+          if(r.success) renderRankings(r.rankings);
+        }).getRankings();
+      }
+
+      // ★ランキング描画 (部署別コイン総数対応)
+      function renderRankings(d) {
+         // 1. 部署(平均回数)
+         const dp=document.getElementById('deptList');
+         dp.innerHTML='';
+         if(!d.dept || d.dept.length === 0) {
+           dp.innerHTML = '<p class="text-xs text-gray-300">データなし</p>';
+         } else {
+           const max=d.dept[0]?d.dept[0].score:1;
+           d.dept.forEach(x=>{
+              const p=(x.score/max)*100;
+              dp.innerHTML+=`<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="font-bold">${x.name}</span><span class="text-indigo-500">${x.score}回/人</span></div><div class="bg-gray-100 rounded-full h-1.5"><div class="bg-indigo-400 h-1.5 rounded-full transition-all duration-500" style="width:${p}%"></div></div></div>`;
+           });
+         }
+
+         // 2. 部署(総コイン数) ★NEW
+         const dt=document.getElementById('deptTotalList');
+         if(dt) {
+            dt.innerHTML='';
+            if(!d.deptTotal || d.deptTotal.length === 0) {
+               dt.innerHTML = '<p class="text-xs text-gray-300">データなし</p>';
+            } else {
+               const maxT = d.deptTotal[0] ? d.deptTotal[0].score : 1;
+               d.deptTotal.forEach(x=>{
+                  const p=(x.score/maxT)*100;
+                  dt.innerHTML+=`<div class="mb-2"><div class="flex justify-between text-xs mb-1"><span class="font-bold">${x.name}</span><span class="text-green-600 font-mono">${x.score}枚</span></div><div class="bg-gray-100 rounded-full h-1.5"><div class="bg-green-500 h-1.5 rounded-full transition-all duration-500" style="width:${p}%"></div></div></div>`;
+               });
+            }
+         }
+
+         // 3. MVP & Giver
+         const renderList = (list, containerId, btnId) => {
+           const c = document.getElementById(containerId);
+           const btn = document.getElementById(btnId);
+           c.innerHTML = '';
+           if(!list || list.length === 0) {
+             c.innerHTML = '<p class="text-center text-gray-300">データなし</p>';
+             btn.classList.add('hidden');
+             return;
+           }
+
+           list.forEach((u, i) => {
+             const isHidden = i >= 5;
+             const ic = i < 3 ? ['🥇','🥈','🥉'][i] : i + 1;
+             const cls = isHidden ? 'ranking-hidden hidden-row' : 'ranking-visible';
+             c.innerHTML += `<div class="${cls} flex justify-between p-2 border-b border-gray-100"><div class="flex gap-2 w-full"><span class="w-6 text-center font-bold text-gray-500">${ic}</span><div><p class="text-xs font-bold">${u.name}</p><p class="text-[10px] text-gray-400">${u.dept}</p></div></div><div class="text-sm font-bold text-indigo-600">${u.score}</div></div>`;
+           });
+
+           if(list.length > 5) {
+             btn.classList.remove('hidden');
+             btn.innerHTML = 'もっと見る <i class="fa-solid fa-chevron-down ml-1"></i>';
+           } else {
+             btn.classList.add('hidden');
+           }
+         };
+
+         renderList(d.mvp, 'mvpList', 'btn-mvpList');
+         renderList(d.giver, 'giverList', 'btn-giverList');
+      }
+
+      function toggleRanking(containerId) {
+        const c = document.getElementById(containerId);
+        const rows = c.querySelectorAll('.hidden-row');
+        const btn = document.getElementById('btn-' + containerId);
+        const isExpanded = btn.innerHTML.includes('up');
+
+        if(isExpanded) {
+           rows.forEach(r => { r.classList.remove('ranking-visible'); r.classList.add('ranking-hidden'); });
+           btn.innerHTML = 'もっと見る <i class="fa-solid fa-chevron-down ml-1"></i>';
+        } else {
+           rows.forEach(r => { r.classList.remove('ranking-hidden'); r.classList.add('ranking-visible'); });
+           btn.innerHTML = '閉じる <i class="fa-solid fa-chevron-up ml-1"></i>';
+        }
+      }
+
+      function showPastRankings() {
+         const m = document.getElementById('modal-archive');
+         const sel = document.getElementById('archiveMonthSelect');
+         m.classList.remove('hidden');
+
+         sel.innerHTML = '<option value="">読み込み中...</option>';
+         ['past-mvp', 'past-dept', 'past-giver'].forEach(id => document.getElementById(id).innerHTML = '');
+
+         google.script.run.withSuccessHandler(res => {
+            sel.innerHTML = '';
+            if(!res.success || !res.months || res.months.length===0) {
+               sel.innerHTML = '<option value="">データなし</option>';
+               return;
+            }
+            res.months.forEach(ym => {
+               const opt = document.createElement('option');
+               opt.value = ym;
+               opt.textContent = ym.replace('_', '年 ') + '月';
+               sel.appendChild(opt);
+            });
+            if(res.months[0]) {
+               sel.value = res.months[0];
+               loadPastRankingDetail(res.months[0]);
+            }
+         }).getArchiveMonths();
+      }
+
+      function loadPastRankingDetail(ym) {
+         if(!ym) return;
+         const loader = document.getElementById('archiveLoader');
+         loader.classList.remove('hidden');
+
+         google.script.run.withSuccessHandler(res => {
+            loader.classList.add('hidden');
+            if(res.success) {
+               renderPastList('past-mvp', res.rankings.mvp);
+               renderPastList('past-dept', res.rankings.dept, true);
+               renderPastList('past-giver', res.rankings.giver);
+            } else {
+               showToast('履歴取得エラー', res.message, true);
+            }
+         }).getArchiveRankingData(ym);
+      }
+
+      function renderPastList(containerId, list, isDept = false) {
+         const c = document.getElementById(containerId);
+         c.innerHTML = '';
+         if(!list || list.length === 0) {
+            c.innerHTML = '<p class="text-xs text-gray-300">データなし</p>';
+            return;
+         }
+         list.forEach((u, i) => {
+            const ic = i < 3 ? ['🥇','🥈','🥉'][i] : (i+1)+'.';
+            if(isDept) {
+               c.innerHTML += `<div class="flex justify-between text-xs py-1 border-b border-gray-50"><span class="font-bold">${ic} ${u.name}</span><span>${u.score}</span></div>`;
+            } else {
+               c.innerHTML += `<div class="flex justify-between items-center text-xs py-2 border-b border-gray-50">
+                  <div class="flex gap-2"><span class="font-bold w-4 text-gray-500">${ic}</span><div><p class="font-bold">${u.name}</p><p class="text-[10px] text-gray-400">${u.dept}</p></div></div>
+                  <span class="font-bold text-indigo-600">${u.score}</span>
+               </div>`;
+            }
+         });
+      }
+
+      function closeArchive() { document.getElementById('modal-archive').classList.add('hidden'); }
+
+      function loadHistory() { google.script.run.withSuccessHandler(r=>{ if(r.success) renderHistory(r.history); }).getUserHistory(); }
+      function renderHistory(h) {
+         const c=document.getElementById('historyContainer'); c.innerHTML='';
+         if(h.length===0) return c.innerHTML='<p class="text-center text-gray-400 text-xs">履歴なし</p>';
+         h.forEach(x=>{
+            const d=new Date(x.timestamp);
+            const ds=`${d.getMonth()+1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+            const isSent = (x.type === 'sent');
+            const color = isSent ? 'text-indigo-600' : 'text-green-600';
+            const icon = isSent ? '<i class="fa-solid fa-arrow-up-right-from-square mr-1"></i>' : '<i class="fa-solid fa-arrow-down-left mr-1"></i>';
+            const sign = isSent ? '-' : '+';
+            const partner = isSent ? `To: ${x.receiver_id}` : `From: ${x.sender_id}`;
+
+            c.innerHTML+=`<div class="bg-white p-3 rounded-xl shadow-sm border border-gray-100">
+               <div class="flex justify-between">
+                  <div>
+                    <p class="text-[10px] text-gray-400">${ds}</p>
+                    <p class="text-sm font-bold text-gray-600">${partner}</p>
+                  </div>
+                  <p class="text-lg font-bold ${color}">${icon}${sign}${x.amount} (${x.value})</p>
+               </div>
+               <p class="text-xs bg-gray-50 p-2 mt-1 rounded">${x.message}</p>
+            </div>`;
+         });
+      }
+      function renderDeptOptions(l) { const s=document.getElementById('registerDeptSelect'); s.innerHTML=''; l.forEach(d=>{const o=document.createElement('option'); o.value=d; o.textContent=d; s.appendChild(o);}); }
+      function handleRegister(e) { e.preventDefault(); showLoading(true); google.script.run.withSuccessHandler(r=>{ if(r.success) handleLogin(); }).registerNewUser({name:e.target.name.value, department:e.target.department.value}); }
+
+      // ★Unified Toast Function★
+      function showToast(title, msg, isError = false) {
+        const e = document.getElementById('toast');
+        const tTitle = document.getElementById('toastTitle');
+        const tMsg = document.getElementById('toastMsg');
+        const icon = document.getElementById('toastIcon');
+
+        tTitle.textContent = title;
+        tMsg.textContent = msg;
+
+        e.className = "fixed bottom-24 left-4 right-4 text-white px-4 py-3 rounded-xl shadow-2xl z-[100] flex items-center justify-between transition-all transform duration-300 translate-y-10 opacity-0";
+
+        if (isError) {
+          e.classList.add('bg-red-500');
+          icon.className = "fa-solid fa-circle-exclamation text-xl";
+        } else {
+          e.classList.add('bg-gray-800');
+          icon.className = "fa-solid fa-circle-check text-green-400 text-xl";
+        }
+
+        e.classList.remove('hidden');
+        requestAnimationFrame(() => {
+           e.classList.remove('translate-y-10', 'opacity-0');
+        });
+
+        setTimeout(() => {
+           e.classList.add('translate-y-10', 'opacity-0');
+           setTimeout(() => e.classList.add('hidden'), 300);
+        }, 3000);
+      }
+
+      function showLoading(b) { const e=document.getElementById('loadingOverlay'); b?e.classList.remove('hidden'):e.classList.add('hidden'); }
+      function handleSettings() { showToast('Info', 'プロフィール編集・設定画面は準備中です！'); }
+    </script>
+  </body>
+</html>
